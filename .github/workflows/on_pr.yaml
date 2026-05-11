@@ -1,0 +1,73 @@
+name: on-pr
+
+on:
+  pull_request:
+
+
+jobs:
+
+  pre-commit:
+    name: Run Pre-Commit Hooks
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set Up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: "pyproject.toml"
+
+      - name: Run Pre-Commit Hooks
+        run: make run-pre-commit
+
+  pytest:
+    name: Run Pytest
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: "Set up Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: "pyproject.toml"
+
+      - name: Run Tests
+        run: make test
+
+  generate-version:
+    name: Generate Version
+    needs: [ pre-commit, pytest ]
+    runs-on: ubuntu-latest
+    outputs:
+      dev_version: ${{ steps.dev_version.outputs.dev_version }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Ensure tags are fetched
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Generate Dev Version
+        id: dev_version
+        run: |
+          DEV_VERSION=$(uvx dunamai from any --format "{base}.post{distance}+g{commit}")
+          echo "dev_version=$DEV_VERSION" >> $GITHUB_OUTPUT
+          echo "Generated dev version: $DEV_VERSION"

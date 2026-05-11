@@ -1,0 +1,58 @@
+name: on-merge
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: write
+
+    outputs:
+      version: ${{ steps.release_outputs.outputs.version }}
+      tag: ${{ steps.release_outputs.outputs.tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Semantic Version Release
+        id: semver_release
+        uses: python-semantic-release/python-semantic-release@v9.21.0
+        with:
+          changelog: false
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          git_committer_name: "github-actions"
+          git_committer_email: "actions@users.noreply.github.com"
+
+      - name: Force Patch Release if no release
+        if: steps.semver_release.outputs.released == 'false'
+        id: patch_release
+        uses: python-semantic-release/python-semantic-release@v9.21.0
+        with:
+          changelog: false
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          git_committer_name: "github-actions"
+          git_committer_email: "actions@users.noreply.github.com"
+          force: patch
+
+      - name: Echo outputs
+        id: release_outputs
+        run: |
+          if [ "${{ steps.semver_release.outputs.released }}" = "true" ]; then
+            echo "Release was made, using release version."
+            echo "version=${{ steps.semver_release.outputs.version }}" >> $GITHUB_OUTPUT
+            echo "tag=${{ steps.semver_release.outputs.tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "No release was made, using patch release."
+            echo "version=${{ steps.patch_release.outputs.version }}" >> $GITHUB_OUTPUT
+            echo "tag=${{ steps.patch_release.outputs.tag }}" >> $GITHUB_OUTPUT
+          fi
+

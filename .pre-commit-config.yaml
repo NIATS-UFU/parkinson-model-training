@@ -1,0 +1,44 @@
+repos:
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: v6.0.0
+  hooks:
+    - id: trailing-whitespace
+      name: "✂️ whitespace · Remove trailing whitespace"
+    - id: end-of-file-fixer
+      name: "🔚 eof · Ensure file ends with newline"
+    - id: check-yaml
+      name: "🔍 yaml · Validate YAML syntax"
+    - id: check-json
+      name: "🔍 json · Validate JSON syntax"
+    - id: check-toml
+      name: "🔍 toml · Validate TOML syntax"
+    - id: check-added-large-files
+      name: "📦 files · Block large file additions"
+    - id: detect-private-key
+      name: "🔐 security · Detect private keys"
+    - id: check-executables-have-shebangs
+      name: "💻 scripts · Check for shebangs"
+    - id: mixed-line-ending
+      name: "🔄 line-endings · Fix mixed line endings"
+
+- repo: https://github.com/astral-sh/ruff-pre-commit
+  rev: v0.14.14
+  hooks:
+    - id: ruff
+      args: [--fix, --exit-non-zero-on-fix]
+      name: "🐍 python · Lint with Ruff"
+    - id: ruff-format
+      name: "🐍 python · Format with Ruff"
+
+- repo: https://github.com/abravalheri/validate-pyproject
+  rev: v0.24.1
+  hooks:
+    - id: validate-pyproject
+      name: "📜 pyproject · Validate pyproject.toml"
+      additional_dependencies: ["validate-pyproject-schema-store[all]"]
+
+- repo: https://github.com/astral-sh/uv-pre-commit
+  rev: 0.7.8
+  hooks:
+    - id: uv-lock
+      name: "🔒 uv · Update lockfile"

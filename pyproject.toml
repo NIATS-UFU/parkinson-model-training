@@ -1,0 +1,135 @@
+[build-system]
+requires = ["hatchling>=1.24.2", "hatch-vcs>=0.3.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "parkinson_model_train"
+description = "Parkinson model train"
+readme = {file = "README.md", content-type = "text/markdown"}
+authors = [
+  {name = "Fernando Andreotti", email = "andreotti@ufu.br"},
+  ]
+requires-python = ">=3.12"
+dynamic = ["version"]
+
+dependencies = [
+    "loguru>=0.7",
+    "typer>=0.15.0",
+    # Uncomment if torch needed "torch>=2.4.1",
+    # Uncomment if torch needed  "torchvision>=0.19.1"
+]
+
+[dependency-groups]
+dev = [
+    # Build and release
+    "build>=1",
+    "commitizen>=4",
+    "hatch-vcs",
+
+    # Linting and formatting
+    "ruff>=0.8",
+    "pre-commit>=4",
+
+    # Testing
+    "pytest>=8",
+    "pytest-cov>=4.1.0",
+    "pytest-pretty>=1",
+]
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu121", marker = "platform_system != 'Darwin'"},
+]
+torchvision = [
+  { index = "pytorch-cu121", marker = "platform_system != 'Darwin'"},
+]
+
+[[tool.uv.index]]
+# https://docs.astral.sh/uv/guides/integration/pytorch/#configuring-accelerators-with-environment-markers
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
+
+# [[tool.uv.index]]
+# name = "private_index"
+# url = "XXXXXX/simple/"
+# publish-url = "XXXX"
+
+[project.scripts]
+main-cli = "parkinson_model_train.main:main"
+
+[tool.coverage.run]
+omit = [
+  "./src/parkinson_model_train/__init__.py"
+]
+
+[tool.ruff]
+src = ["src"]
+target-version = "py312"
+line-length = 120
+fix = true
+preview = true
+
+[tool.ruff.lint]
+select = [
+  "E",  # pycodestyle errors
+  "F",  # pyflakes
+  "W",  # pycodestyle warnings
+  "I",  # isort
+  "B",  # flake8-bugbear
+  "UP", # pyupgrade
+]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401", "I002"]
+"tests/*.py" = ["S101"]
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/parkinson_model_train"]
+
+[tool.hatch.build.targets.wheel.sources]
+"src" = "parkinson_model_train"
+
+[tool.hatch.version.raw-options]
+version_scheme = "post-release"
+local_scheme = "node-and-date"
+git_describe_command = ["git", "describe", "--tags", "--long", "--match", "v*"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+  "/.github",
+  "/backend",
+  "/scripts",
+]
+
+[project.urls]
+Repository = "https://github.com/NIATS-UFU/parkinson-model-train"
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+version = "0.1.0"
+annotated_tag = true
+incremental = true
+update_changelog_on_bump = true
+check_consistency = true
+
+  [tool.commitizen.change_type_map]
+  feat = "⚡ Feat"
+  fix = "🐞 Fix"
+  perf = "🚀 Performance"
+  refactor = "🛠  Refactor"
+  docs = "📚 Docs"
