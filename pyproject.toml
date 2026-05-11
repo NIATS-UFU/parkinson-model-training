@@ -13,10 +13,12 @@ requires-python = ">=3.12"
 dynamic = ["version"]
 
 dependencies = [
-    "loguru>=0.7",
+    "pillow>=11",
+    "timm>=1.0",
+    "torch>=2.7",
+    "torchvision>=0.22",
+    "tqdm>=4.66",
     "typer>=0.15.0",
-    # Uncomment if torch needed "torch>=2.4.1",
-    # Uncomment if torch needed  "torchvision>=0.19.1"
 ]
 
 [dependency-groups]
@@ -38,10 +40,10 @@ dev = [
 
 [tool.uv.sources]
 torch = [
-  { index = "pytorch-cu121", marker = "platform_system != 'Darwin'"},
+  { index = "pytorch-cu126", marker = "platform_system != 'Darwin'"},
 ]
 torchvision = [
-  { index = "pytorch-cu121", marker = "platform_system != 'Darwin'"},
+  { index = "pytorch-cu126", marker = "platform_system != 'Darwin'"},
 ]
 
 [[tool.uv.index]]
@@ -51,8 +53,8 @@ url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
 [[tool.uv.index]]
-name = "pytorch-cu121"
-url = "https://download.pytorch.org/whl/cu121"
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
 explicit = true
 
 # [[tool.uv.index]]

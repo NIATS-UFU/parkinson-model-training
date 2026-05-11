@@ -2,36 +2,108 @@
 
 [![on-merge](https://github.com/NIATS-UFU/parkinson-model-train/actions/workflows/on_merge.yaml/badge.svg)](https://github.com/NIATS-UFU/parkinson-model-train/actions/workflows/on_merge.yaml)
 [![ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
-![Python](https://img.shields.io/badge/python-3.12-blue.svg)
+![Python](https://img.shields.io/badge/python-3.12%2B-blue.svg)
 
-Parkinson model train
+Training repo for the NIATS Parkinson drawing baseline: 512x512 spiral/wave crops from [`spiral-cropper`](https://github.com/NIATS-UFU/spiral-cropper) go into a frozen DINO/DINOv2 encoder, then a supervised linear classifier is trained with subject-level splits.
+
+- **Repository:** <https://github.com/NIATS-UFU/parkinson-model-train>
+- **Local path:** `/data/git/ufu/parkinson_model_training`
+- **CLI entry point:** `main-cli`
+- **Main assumption:** split by subject, not by image, to avoid leakage.
+
+## Workflow
+
+1. Produce standardized 512x512 drawing crops with `spiral-cropper`.
+2. Create a CSV manifest with image paths, subject IDs, and labels.
+3. Validate the manifest and preview the subject-level split.
+4. Train the frozen DINO classifier baseline.
+5. Review `run_summary.json` before interpreting model metrics.
 
 ## Installation
 
 ```sh
-uv pip install parkinson_model_train
+make install
 ```
 
-## ⚡ Features
+This installs the Python package and development dependencies with `uv`. The project currently uses PyTorch CUDA 12.6 wheels on Linux.
 
-- [`pre-commit`](https://github.com/pre-commit/pre-commit) validates your commits.
-- [`ruff`](https://github.com/charliermarsh/ruff) provides static code analysis and a code and import formatting using [`black`](https://github.com/psf/black) and [`isort`](https://github.com/PyCQA/isort) styles.
-- [`pytest`](https://github.com/pytest-dev/pytest) runs your test suite.
-- [`commitizen`](https://github.com/commitizen-tools/commitizen) ensures you follow [Conventional commit style](https://www.conventionalcommits.org/en/) and generates your release changelogs according to [SemVer](https://semver.org/)
-- [`python-semantic-release`](https://python-semantic-release.readthedocs.io/en/latest/) CI/CD automatically increases version and create git releases based on commit messages following conventional commit style.
-- Docker support
+## Manifest
 
-### Automated Versioning Strategy
+The training CLI expects a CSV manifest. Relative image paths are resolved from the manifest directory.
 
-- PR requests receive a tag based on <current_version>.dev0.<commit_hash>. This is not a proper tag, but can be used for temporary deployment in the future
-- On merge:
-   - Bump semantic version based on conventional commits
-   - OR - patch release on merge if commits contain no hint to conventional commit.
+```csv
+image_path,subject_id,label
+5_final/p001_spi_01.png,p001,PD
+5_final/c014_spi_01.png,c014,HC
+```
 
+Required columns:
 
-## Recommended Tools
+- `image_path`: path to a crop image, usually from `spiral-cropper` `5_final/`
+- `subject_id`: participant identifier used for leakage-safe splitting
+- `label`: class label, for example `PD` or `HC`
 
-- Managing Python versions? [pyenv](https://github.com/pyenv/pyenv)
-- Building a CLI? [typer](https://typer.tiangolo.com/)
-- Logging? [Loguru](https://github.com/Delgan/loguru)
+## Commands
 
+Validate the manifest and image paths:
+
+```sh
+main-cli validate-manifest data/manifest.csv
+```
+
+Preview train/validation/test sizes using subject-level splits:
+
+```sh
+main-cli split-summary data/manifest.csv --val-fraction 0.15 --test-fraction 0.15
+```
+
+Train the baseline:
+
+```sh
+main-cli train data/manifest.csv runs/dinov2-baseline --epochs 20 --batch-size 16
+```
+
+Useful options:
+
+- `--model-name`: any compatible `timm` model; default is `vit_small_patch14_dinov2`
+- `--image-size`: input resize size; default is `512`
+- `--device`: `auto`, `cpu`, `cuda`, or a Torch device string
+- `--learning-rate`: AdamW learning rate for the classifier head
+- `--val-fraction`, `--test-fraction`, `--seed`: subject-level split controls
+- `--num-workers`: PyTorch DataLoader worker count
+
+## Outputs
+
+Training writes to the selected output directory:
+
+- `best_classifier.pt`: classifier checkpoint, label mapping, image size, model name, and validation metrics
+- `run_summary.json`: split counts, subject counts, label mapping, and test metrics
+
+## Modelling Rules
+
+- Use NIATS `spiral-cropper` 512x512 crops first.
+- Split by `subject_id`, never by image row.
+- Start with frozen DINO/DINOv2 embeddings before fine-tuning.
+- Keep augmentation conservative for the first baseline.
+- Treat inpainted or artifact-removed crops according to their metadata; do not silently mix them into raw-signal claims.
+
+## Development
+
+Run the full local check before presenting changes:
+
+```sh
+make check
+```
+
+Run only tests:
+
+```sh
+make test
+```
+
+Format and lint:
+
+```sh
+make fmt
+make lint
+```
