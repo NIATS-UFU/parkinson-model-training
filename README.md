@@ -72,6 +72,22 @@ Useful options:
 - `--val-fraction`, `--test-fraction`, `--seed`: subject-level split controls
 - `--num-workers`: PyTorch DataLoader worker count
 
+Create manifests from local dataset layouts:
+
+```sh
+main-cli create-manifest handpd data/handpd data/manifests/handpd.csv
+main-cli create-manifest newhandpd data/newhandpd data/manifests/newhandpd.csv
+main-cli create-manifest hemato data/hemato data/manifests/hemato.csv
+main-cli create-manifest kaggle-drawings data/kaggle/parkinsons-drawings data/manifests/kaggle_drawings.csv
+main-cli create-manifest kaggle-spiral data/kaggle_2 data/manifests/kaggle_2.csv
+main-cli create-manifest roboflow data/roboflow data/manifests/roboflow.csv
+main-cli create-manifest folador data/folador data/manifests/folador.csv
+```
+
+`kaggle-drawings` targets Kaggle `kmader/parkinsons-drawings` and reads nested spiral/wave train/test class folders. The dataset does not expose reliable participant IDs, so the loader uses image-level pseudo-subject IDs; use it only for smoke tests or literature-comparison baselines, not as primary evidence.
+
+The NIATS cropper metadata at `/data/git/ufu/crop_spiral_tests/output/all_metadata.parquet` still needs to be joined with `subject_id` and clinical `label` before it can be used for the primary benchmark.
+
 ## Outputs
 
 Training writes to the selected output directory:

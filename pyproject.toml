@@ -119,7 +119,7 @@ Repository = "https://github.com/NIATS-UFU/parkinson-model-train"
 [tool.pytest.ini_options]
 minversion = "6.0"
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 
 [tool.commitizen]
 name = "cz_conventional_commits"

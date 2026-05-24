@@ -27,7 +27,6 @@ def train_classifier(config: TrainingConfig) -> Path:
     import torch
     from torch import nn
     from torch.utils.data import DataLoader
-    from torchvision import transforms
 
     records = load_manifest(
         config.manifest_path,
@@ -46,26 +45,22 @@ def train_classifier(config: TrainingConfig) -> Path:
     validate_split_labels(split)
 
     device = _resolve_device(config.device)
-    transform = transforms.Compose([
-        transforms.Resize((config.image_size, config.image_size)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-    ])
+    train_transform, eval_transform = build_image_transforms(config)
 
     train_loader = DataLoader(
-        DrawingDataset(split.train, label_to_index, transform),
+        DrawingDataset(split.train, label_to_index, train_transform),
         batch_size=config.batch_size,
         shuffle=True,
         num_workers=config.num_workers,
     )
     val_loader = DataLoader(
-        DrawingDataset(split.val, label_to_index, transform),
+        DrawingDataset(split.val, label_to_index, eval_transform),
         batch_size=config.batch_size,
         shuffle=False,
         num_workers=config.num_workers,
     )
     test_loader = DataLoader(
-        DrawingDataset(split.test, label_to_index, transform),
+        DrawingDataset(split.test, label_to_index, eval_transform),
         batch_size=config.batch_size,
         shuffle=False,
         num_workers=config.num_workers,
@@ -101,6 +96,7 @@ def train_classifier(config: TrainingConfig) -> Path:
                     "classifier_state_dict": classifier.state_dict(),
                     "label_to_index": label_to_index,
                     "image_size": config.image_size,
+                    "augmentation": _augmentation_summary(config),
                     "epoch": epoch,
                     "val_metrics": val_metrics,
                 },
@@ -134,6 +130,54 @@ class DrawingDataset:
         with Image.open(record.image_path) as image:
             tensor = self.transform(image.convert("RGB"))
         return tensor, self.label_to_index[record.label]
+
+
+def build_image_transforms(config: TrainingConfig) -> tuple[object, object]:
+    """Build train and evaluation image transforms for DINO classifiers."""
+    from torchvision import transforms
+
+    normalize = transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225))
+    tensor_transforms = [transforms.ToTensor(), normalize]
+    eval_transform = transforms.Compose([
+        transforms.Resize((config.image_size, config.image_size)),
+        *tensor_transforms,
+    ])
+    if not config.augment:
+        return eval_transform, eval_transform
+
+    train_transform = transforms.Compose([
+        transforms.RandomResizedCrop(
+            config.image_size,
+            scale=(config.crop_scale_min, 1.0),
+            ratio=(config.crop_ratio_min, config.crop_ratio_max),
+        ),
+        transforms.RandomRotation(config.rotation_degrees, fill=255),
+        transforms.RandomApply(
+            [transforms.ColorJitter(brightness=config.brightness_jitter, contrast=config.contrast_jitter)],
+            p=config.jitter_probability,
+        ),
+        transforms.RandomApply(
+            [transforms.GaussianBlur(kernel_size=config.blur_kernel_size, sigma=(0.1, 1.0))],
+            p=config.blur_probability,
+        ),
+        *tensor_transforms,
+    ])
+    return train_transform, eval_transform
+
+
+def _augmentation_summary(config: TrainingConfig) -> dict[str, bool | float | int]:
+    return {
+        "augment": config.augment,
+        "rotation_degrees": config.rotation_degrees,
+        "crop_scale_min": config.crop_scale_min,
+        "crop_ratio_min": config.crop_ratio_min,
+        "crop_ratio_max": config.crop_ratio_max,
+        "blur_probability": config.blur_probability,
+        "blur_kernel_size": config.blur_kernel_size,
+        "jitter_probability": config.jitter_probability,
+        "brightness_jitter": config.brightness_jitter,
+        "contrast_jitter": config.contrast_jitter,
+    }
 
 
 def _train_epoch(encoder, classifier, data_loader, optimizer, loss_fn, device) -> float:

@@ -24,6 +24,16 @@ class TrainingConfig:
     seed: int = 42
     num_workers: int = 4
     device: str = "auto"
+    augment: bool = True
+    rotation_degrees: float = 10.0
+    crop_scale_min: float = 0.9
+    crop_ratio_min: float = 0.95
+    crop_ratio_max: float = 1.05
+    blur_probability: float = 0.1
+    blur_kernel_size: int = 3
+    jitter_probability: float = 0.2
+    brightness_jitter: float = 0.08
+    contrast_jitter: float = 0.08
 
     def validate(self) -> None:
         """Raise ValueError if the training configuration is invalid."""
@@ -56,4 +66,28 @@ class TrainingConfig:
             raise ValueError(msg)
         if self.num_workers < 0:
             msg = "num_workers cannot be negative"
+            raise ValueError(msg)
+        if self.rotation_degrees < 0:
+            msg = "rotation_degrees cannot be negative"
+            raise ValueError(msg)
+        if not 0 < self.crop_scale_min <= 1:
+            msg = "crop_scale_min must be in (0, 1]"
+            raise ValueError(msg)
+        if not 0 < self.crop_ratio_min <= self.crop_ratio_max:
+            msg = "crop_ratio_min and crop_ratio_max must be positive and ordered"
+            raise ValueError(msg)
+        if not 0 <= self.blur_probability <= 1:
+            msg = "blur_probability must be in [0, 1]"
+            raise ValueError(msg)
+        if self.blur_kernel_size <= 0 or self.blur_kernel_size % 2 == 0:
+            msg = "blur_kernel_size must be a positive odd integer"
+            raise ValueError(msg)
+        if not 0 <= self.jitter_probability <= 1:
+            msg = "jitter_probability must be in [0, 1]"
+            raise ValueError(msg)
+        if self.brightness_jitter < 0:
+            msg = "brightness_jitter cannot be negative"
+            raise ValueError(msg)
+        if self.contrast_jitter < 0:
+            msg = "contrast_jitter cannot be negative"
             raise ValueError(msg)
