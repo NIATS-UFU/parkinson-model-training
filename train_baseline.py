@@ -267,6 +267,7 @@ def run_training() -> None:
     fold_results = []
     runs_dir = Path("runs")
     runs_dir.mkdir(exist_ok=True)
+    all_history = []
 
     for fold_idx in range(args.num_folds):
         print(f"\n--- FOLD {fold_idx + 1}/{args.num_folds} ---")
@@ -313,6 +314,7 @@ def run_training() -> None:
 
         best_val_balanced_acc = -1.0
         best_metrics = {}
+        fold_history = []
 
         # Epoch loop
         for epoch in range(1, args.epochs + 1):
@@ -369,6 +371,18 @@ def run_training() -> None:
                 f"Val Acc: {metrics['accuracy']:.4f} | Val Balanced Acc: {metrics['balanced_accuracy']:.4f}"
             )
 
+            # Track history per epoch
+            fold_history.append({
+                "epoch": epoch,
+                "train_loss": avg_train_loss,
+                "val_loss": avg_val_loss,
+                "accuracy": metrics["accuracy"],
+                "balanced_accuracy": metrics["balanced_accuracy"],
+                "sensitivity": metrics["sensitivity"],
+                "specificity": metrics["specificity"],
+                "roc_auc": metrics["roc_auc"],
+            })
+
             # Save best checkpoint for this fold
             if metrics["balanced_accuracy"] > best_val_balanced_acc:
                 best_val_balanced_acc = metrics["balanced_accuracy"]
@@ -390,6 +404,7 @@ def run_training() -> None:
         print(f"  Specificity (HC):  {best_metrics['specificity']:.4f}")
         print(f"  ROC-AUC:           {best_metrics['roc_auc']:.4f}")
         fold_results.append(best_metrics)
+        all_history.append({"fold": fold_idx + 1, "best_metrics": best_metrics, "epochs": fold_history})
 
     # -------------------------------------------------------------------------
     # Aggregate and consolidated CV metrics report
@@ -409,6 +424,42 @@ def run_training() -> None:
     print(f"Average Specificity (HC):  {avg_specificity:.4f}")
     print(f"Average ROC-AUC:           {avg_roc_auc:.4f}")
     print("=========================================================================")
+
+    # Save full training history to JSON
+    import json
+
+    history_data = {
+        "model_type": args.model_type,
+        "frozen_backbone": args.frozen_backbone,
+        "epochs": args.epochs,
+        "batch_size": args.batch_size,
+        "lr": args.lr,
+        "num_folds": args.num_folds,
+        "seed": args.seed,
+        "consolidated": {
+            "accuracy": avg_accuracy,
+            "balanced_accuracy": avg_balanced_accuracy,
+            "sensitivity": avg_sensitivity,
+            "specificity": avg_specificity,
+            "roc_auc": avg_roc_auc,
+        },
+        "folds": all_history,
+    }
+
+    history_path = runs_dir / "baseline_history.json"
+    with open(history_path, "w", encoding="utf-8") as f:
+        json.dump(history_data, f, indent=2)
+    print(f"Saved complete training history and metrics to: {history_path}")
+
+    # Generate HTML interactive report if generator module is available
+    try:
+        from generate_report import generate_html_report
+
+        report_path = runs_dir / "baseline_report.html"
+        generate_html_report(history_path, report_path)
+        print(f"Interactive visual report successfully generated at: {report_path}")
+    except ImportError:
+        print("Note: generate_report module not yet created. Skipping visual report generation.")
 
 
 if __name__ == "__main__":
