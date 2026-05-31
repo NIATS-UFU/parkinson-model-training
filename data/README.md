@@ -8,8 +8,8 @@ Training uses a CSV manifest with these required columns:
 
 ```csv
 image_path,subject_id,label,dataset,drawing_type,source_label,label_source
-data/handpd/SpiralPatients/0001-1.jpg,0001,PD,handpd,spiral,PD,filename
-data/handpd/SpiralControl/0059-1.jpg,0059,HC,handpd,spiral,HC,filename
+data/hemato/V001/V001_PARKINSON_RAW_DATA_drawings_1/5_final/test3_spi_centered.png,V001,PD,hemato,spiral,PD,filename
+data/hemato/V041/V041_CONTROL_RAW_DATA_drawings_1/5_final/test3_spi_centered.png,V041,HC,hemato,spiral,HC,filename
 ```
 
 Required fields:
@@ -30,19 +30,27 @@ Common metadata fields:
 Create manifests with:
 
 ```sh
-main-cli create-manifest handpd data/handpd data/manifests/handpd.csv
-main-cli create-manifest newhandpd data/newhandpd data/manifests/newhandpd.csv
 main-cli create-manifest hemato data/hemato data/manifests/hemato.csv
-main-cli create-manifest kaggle-drawings data/kaggle/parkinsons-drawings data/manifests/kaggle_drawings.csv
-main-cli create-manifest kaggle-spiral data/kaggle_2 data/manifests/kaggle_2.csv
-main-cli create-manifest roboflow data/roboflow data/manifests/roboflow.csv
-main-cli create-manifest folador data/folador data/manifests/folador.csv
+main-cli create-manifest niats-folador data/folador/HOG-IA-desenho-manuscrito/pyTremorDetect/dataset-junto data/manifests/niats_folador.csv
+main-cli create-manifest image-tree data/my-labelled-images data/manifests/image_tree.csv
 ```
 
-The `hemato` loader reads only `**/5_final/*` image crops. Non-final processing folders should not be kept here.
-The `kaggle-drawings` loader targets Kaggle `kmader/parkinsons-drawings`, including nested spiral/wave and train/test class folders. It uses image-level pseudo-subject IDs because the Kaggle files do not provide reliable participant identifiers.
-The `roboflow` loader preserves the exported `train`/`valid`/`test` folder as metadata, but training still makes its own subject-level split from the original filename stem before `.rf.`.
-The `folador` loader reads `dataset-junto` image folders and uses `HE...`, `HO...`, `PE...`, or `PO...` filename tokens as subject IDs.
+The `hemato` loader reads only `**/5_final/*` image crops. It uses the top folder under the dataset root as `subject_id` and preserves the final-crop parent folder as `drawing_session` metadata. Non-final processing folders should not be kept here.
+Example shape:
+
+```text
+data/hemato/V13/V13_PARKINSON_RAW_DATA_drawings_9/5_final/test1_spi_centered.png
+```
+
+The `niats-folador` loader reads either Folador layout:
+
+```text
+dataset-junto/espiral/treinamento/parkinson/1_2_PE3.jpg
+dataset-separado/dia2/ondas/teste/higido/2_5_HO1.jpg
+```
+
+It derives `subject_id` from the drawing code plus patient number, such as `PE-2` or `HO-5`, so repeated collections from different days stay grouped by participant rather than by crop.
+The `image-tree` loader is a generic fallback. It scans recursively, infers labels from path text, and uses the image parent folder as `subject_id`.
 
 ## NIATS Cropper Metadata
 
@@ -52,14 +60,4 @@ The Obsidian UFU postdoc notes identify NIATS crops as the primary benchmark. Th
 /data/git/ufu/crop_spiral_tests/output/all_metadata.parquet
 ```
 
-That file has crop paths and QC fields, but it still needs a clinical join that adds `subject_id` and `label` before `parkinson-model-train` can produce meaningful NIATS metrics. Until that join exists, use the external manifests above for reader smoke tests and comparison baselines.
-
-## Downloaded References
-
-- HandPD and NewHandPD: `https://wwwp.fc.unesp.br/~papa/pub/datasets/Handpd/`
-- Kaggle Parkinson's Drawings: `https://www.kaggle.com/datasets/kmader/parkinsons-drawings`
-- PaHaW GitHub mirror: `https://github.com/musaru/PD_PaHaW`
-- Roboflow export: `object detection parkinson`, CC BY 4.0, exported March 2, 2026.
-- Folador HOG data/code: local `HOG-IA-desenho-manuscrito` archive.
-
-PaHaW currently downloads as extracted CSV feature files in the referenced repository, not as drawing images for this image-classifier path.
+That file has crop paths and QC fields, but it still needs a clinical join that adds `subject_id` and `label` before `parkinson-model-train` can produce meaningful NIATS metrics. Until that join exists, keep external datasets in manually curated manifests or use `image-tree` only for simple smoke tests.

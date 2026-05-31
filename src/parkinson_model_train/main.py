@@ -5,8 +5,8 @@ from typing import Annotated
 
 import typer
 
-from parkinson_model_train.config import TrainingConfig
 from parkinson_model_train.data import (
+    TrainingConfig,
     labels_to_indices,
     load_dataset_records,
     load_manifest,
@@ -14,6 +14,7 @@ from parkinson_model_train.data import (
     validate_image_paths,
     write_manifest,
 )
+from parkinson_model_train.data.datasets import DATASET_LOADERS
 from parkinson_model_train.train import train_classifier
 
 app = typer.Typer(help="Train frozen DINO classifiers for Parkinson drawing crops.")
@@ -21,7 +22,9 @@ app = typer.Typer(help="Train frozen DINO classifiers for Parkinson drawing crop
 
 @app.command()
 def validate_manifest(
-    manifest: Annotated[Path, typer.Argument(help="CSV with image_path, subject_id, and label columns.")],
+    manifest: Annotated[
+        Path, typer.Argument(help="CSV manifest with image_path, subject_id, and label columns.")
+    ],
     check_files: Annotated[bool, typer.Option(help="Verify that all image paths exist.")] = True,
 ) -> None:
     """Validate the input manifest and print its class/subject summary."""
@@ -36,7 +39,9 @@ def validate_manifest(
 
 @app.command()
 def split_summary(
-    manifest: Annotated[Path, typer.Argument(help="CSV with image_path, subject_id, and label columns.")],
+    manifest: Annotated[
+        Path, typer.Argument(help="CSV manifest with image_path, subject_id, and label columns.")
+    ],
     val_fraction: Annotated[float, typer.Option(help="Subject fraction for validation.")] = 0.15,
     test_fraction: Annotated[float, typer.Option(help="Subject fraction for testing.")] = 0.15,
     seed: Annotated[int, typer.Option(help="Random seed for subject split.")] = 42,
@@ -51,12 +56,7 @@ def split_summary(
 def create_manifest(
     dataset: Annotated[
         str,
-        typer.Argument(
-            help=(
-                "Dataset loader: hemato, handpd, newhandpd, kaggle-drawings, kaggle-spiral, "
-                "roboflow, folador, or image-tree."
-            )
-        ),
+        typer.Argument(help=f"Dataset loader: {', '.join(sorted(DATASET_LOADERS))}."),
     ],
     root: Annotated[Path, typer.Argument(help="Dataset root directory.")],
     output: Annotated[Path, typer.Argument(help="Output CSV manifest path.")],
@@ -70,7 +70,9 @@ def create_manifest(
 
 @app.command()
 def train(
-    manifest: Annotated[Path, typer.Argument(help="CSV with image_path, subject_id, and label columns.")],
+    manifest: Annotated[
+        Path, typer.Argument(help="CSV manifest with image_path, subject_id, and label columns.")
+    ],
     output_dir: Annotated[Path, typer.Argument(help="Directory for checkpoints and run summaries.")],
     epochs: Annotated[int, typer.Option(help="Number of classifier training epochs.")] = 10,
     batch_size: Annotated[int, typer.Option(help="Training batch size.")] = 16,
@@ -81,7 +83,7 @@ def train(
     seed: Annotated[int, typer.Option(help="Random seed for subject split.")] = 42,
     num_workers: Annotated[int, typer.Option(help="PyTorch DataLoader worker count.")] = 4,
     model_name: Annotated[str, typer.Option(help="timm DINO/DINOv2 model name.")] = "vit_small_patch14_dinov2",
-    image_size: Annotated[int, typer.Option(help="Image size used by transforms.")] = 512,
+    image_size: Annotated[int, typer.Option(help="Image size used by transforms.")] = 518,
     device: Annotated[str, typer.Option(help="auto, cpu, cuda, or a torch device string.")] = "auto",
     augment: Annotated[bool, typer.Option(help="Apply train-only image augmentation.")] = True,
     rotation_degrees: Annotated[float, typer.Option(help="Maximum random train rotation in degrees.")] = 10.0,
@@ -123,6 +125,7 @@ def train(
         )
     )
     typer.echo(f"wrote checkpoint: {checkpoint_path}")
+    typer.echo(f"wrote metric plots: {output_dir / 'test_metrics.svg'}, {output_dir / 'split_counts.svg'}")
 
 
 def main() -> None:

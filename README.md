@@ -4,16 +4,48 @@
 [![ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 ![Python](https://img.shields.io/badge/python-3.12%2B-blue.svg)
 
-Training repo for the NIATS Parkinson drawing baseline: 512x512 spiral/wave crops from [`spiral-cropper`](https://github.com/NIATS-UFU/spiral-cropper) go into a frozen DINO/DINOv2 encoder, then a supervised linear classifier is trained with subject-level splits.
+Training repo for the NIATS Parkinson drawing baseline: spiral/wave crops from [`spiral-cropper`](https://github.com/NIATS-UFU/spiral-cropper) go into a frozen DINO/DINOv2 encoder, then a supervised linear classifier is trained with subject-level splits.
 
 - **Repository:** <https://github.com/NIATS-UFU/parkinson-model-train>
 - **Local path:** `/data/git/ufu/parkinson_model_training`
 - **CLI entry point:** `main-cli`
 - **Main assumption:** split by subject, not by image, to avoid leakage.
+- **Training guide:** [`docs/training_walkthrough.md`](docs/training_walkthrough.md)
+
+## Quick Start
+
+Install dependencies:
+
+```sh
+make install
+```
+
+Create or validate a manifest:
+
+```sh
+main-cli create-manifest hemato data/hemato data/manifests/hemato.csv
+main-cli create-manifest niats-folador data/folador/HOG-IA-desenho-manuscrito/pyTremorDetect/dataset-junto data/manifests/niats_folador.csv
+main-cli validate-manifest data/manifests/hemato.csv
+main-cli split-summary data/manifests/hemato.csv --val-fraction 0.15 --test-fraction 0.15
+```
+
+Train the default DINOv2 baseline:
+
+```sh
+main-cli train \
+  data/manifests/hemato.csv \
+  runs/dinov2-hemato \
+  --model-name vit_small_patch14_dinov2 \
+  --image-size 518 \
+  --epochs 20 \
+  --batch-size 16
+```
+
+Read [`docs/training_walkthrough.md`](docs/training_walkthrough.md) for a notebook-style walkthrough with diagrams, plotting snippets, and practical checks before interpreting metrics.
 
 ## Workflow
 
-1. Produce standardized 512x512 drawing crops with `spiral-cropper`.
+1. Produce standardized drawing crops with `spiral-cropper`.
 2. Create a CSV manifest with image paths, subject IDs, and labels.
 3. Validate the manifest and preview the subject-level split.
 4. Train the frozen DINO classifier baseline.
@@ -60,13 +92,13 @@ main-cli split-summary data/manifest.csv --val-fraction 0.15 --test-fraction 0.1
 Train the baseline:
 
 ```sh
-main-cli train data/manifest.csv runs/dinov2-baseline --epochs 20 --batch-size 16
+main-cli train data/manifest.csv runs/dinov2-baseline --image-size 518 --epochs 20 --batch-size 16
 ```
 
 Useful options:
 
 - `--model-name`: any compatible `timm` model; default is `vit_small_patch14_dinov2`
-- `--image-size`: input resize size; default is `512`
+- `--image-size`: input resize size. Use `518` for `vit_small_patch14_dinov2` with current timm builds.
 - `--device`: `auto`, `cpu`, `cuda`, or a Torch device string
 - `--learning-rate`: AdamW learning rate for the classifier head
 - `--val-fraction`, `--test-fraction`, `--seed`: subject-level split controls
@@ -75,16 +107,14 @@ Useful options:
 Create manifests from local dataset layouts:
 
 ```sh
-main-cli create-manifest handpd data/handpd data/manifests/handpd.csv
-main-cli create-manifest newhandpd data/newhandpd data/manifests/newhandpd.csv
 main-cli create-manifest hemato data/hemato data/manifests/hemato.csv
-main-cli create-manifest kaggle-drawings data/kaggle/parkinsons-drawings data/manifests/kaggle_drawings.csv
-main-cli create-manifest kaggle-spiral data/kaggle_2 data/manifests/kaggle_2.csv
-main-cli create-manifest roboflow data/roboflow data/manifests/roboflow.csv
-main-cli create-manifest folador data/folador data/manifests/folador.csv
+main-cli create-manifest niats-folador data/folador/HOG-IA-desenho-manuscrito/pyTremorDetect/dataset-junto data/manifests/niats_folador.csv
+main-cli create-manifest image-tree data/my-labelled-images data/manifests/image_tree.csv
 ```
 
-`kaggle-drawings` targets Kaggle `kmader/parkinsons-drawings` and reads nested spiral/wave train/test class folders. The dataset does not expose reliable participant IDs, so the loader uses image-level pseudo-subject IDs; use it only for smoke tests or literature-comparison baselines, not as primary evidence.
+`hemato` is the primary final-crop loader when you already have `5_final/` outputs from `spiral-cropper`.
+`niats-folador` is the concise example for the Folador folder layout under `dataset-junto/` or `dataset-separado/`.
+`image-tree` is the small generic fallback for labelled image folders when a custom manifest is not worth writing.
 
 The NIATS cropper metadata at `/data/git/ufu/crop_spiral_tests/output/all_metadata.parquet` still needs to be joined with `subject_id` and clinical `label` before it can be used for the primary benchmark.
 
@@ -94,14 +124,35 @@ Training writes to the selected output directory:
 
 - `best_classifier.pt`: classifier checkpoint, label mapping, image size, model name, and validation metrics
 - `run_summary.json`: split counts, subject counts, label mapping, and test metrics
+- `test_metrics.svg`, `split_counts.svg`, `validation_history.svg`: standalone plots for quick inspection
 
 ## Modelling Rules
 
-- Use NIATS `spiral-cropper` 512x512 crops first.
+- Use NIATS `spiral-cropper` crops first.
 - Split by `subject_id`, never by image row.
 - Start with frozen DINO/DINOv2 embeddings before fine-tuning.
 - Keep augmentation conservative for the first baseline.
 - Treat inpainted or artifact-removed crops according to their metadata; do not silently mix them into raw-signal claims.
+- Confirm the model input size before training. The default timm DINOv2 model expects `518x518` inputs.
+- Check that validation and test splits contain both `PD` and `HC` subjects before interpreting accuracy.
+
+## Reports And Plots
+
+The main CLI writes a compact JSON summary and standalone SVG plots for every run:
+
+```sh
+python -m json.tool runs/dinov2-baseline/run_summary.json
+```
+
+Open `runs/dinov2-baseline/test_metrics.svg`, `split_counts.svg`, or `validation_history.svg` to inspect the run visually.
+
+For epoch-by-epoch cross-validation curves, use the baseline script:
+
+```sh
+python train_baseline.py --data-dir data/hemato --model-type simple-cnn --epochs 5 --num-folds 5
+```
+
+This writes `runs/baseline_history.json` and the same standalone SVG plot files used by the main trainer.
 
 ## Development
 

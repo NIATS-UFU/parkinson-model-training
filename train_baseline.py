@@ -6,21 +6,21 @@ It trains a model using standard PyTorch torchvision augmentations and evaluates
 consolidated cross-validation performance.
 """
 
-from __future__ import annotations
-
 import argparse
+import json
 import random
 from pathlib import Path
+from typing import Any
 
-import timm
 import torch
 import torch.nn as nn
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
-from torchvision import transforms
 from tqdm import tqdm
 
-from parkinson_model_train.data import load_hemato_records
+from parkinson_model_train.data.datasets import load_hemato_records
+from parkinson_model_train.evaluation import compute_metrics
+from parkinson_model_train.reporting import write_metric_plots
 
 
 # -------------------------------------------------------------------------
@@ -59,7 +59,7 @@ class SimpleCNN(nn.Module):
 class SpiralBaselineDataset(Dataset):
     """PyTorch dataset for loading and transforming spiral drawings."""
 
-    def __init__(self, records: list, label_to_index: dict[str, int], transform: transforms.Compose) -> None:
+    def __init__(self, records: list, label_to_index: dict[str, int], transform: Any) -> None:
         self.records = records
         self.label_to_index = label_to_index
         self.transform = transform
@@ -84,18 +84,35 @@ def stratified_group_k_fold(records: list, num_folds: int = 5, seed: int = 42) -
     Guarantees that drawings from a patient reside in either the train split or
     validation split, never both, while keeping the ratio of PD vs HC balanced.
     """
+    if not records:
+        msg = "Cannot create folds from an empty record list"
+        raise ValueError(msg)
+    if num_folds < 2:
+        msg = "num_folds must be at least 2"
+        raise ValueError(msg)
+
     # 1. Map drawings to their patient IDs
     patient_to_records = {}
     patient_to_label = {}
     for record in records:
-        # patient_id is the grandparent directory name (e.g. V1)
-        patient_id = record.image_path.parent.parent.parent.name
+        patient_id = record.subject_id
         patient_to_records.setdefault(patient_id, []).append(record)
-        patient_to_label[patient_id] = record.label
+        existing_label = patient_to_label.setdefault(patient_id, record.label)
+        if existing_label != record.label:
+            msg = f"Patient {patient_id} has conflicting labels: {existing_label}, {record.label}"
+            raise ValueError(msg)
+
+    unsupported_labels = sorted({label for label in patient_to_label.values() if label not in {"HC", "PD"}})
+    if unsupported_labels:
+        msg = f"Unsupported labels for baseline: {', '.join(unsupported_labels)}"
+        raise ValueError(msg)
 
     # 2. Segregate patient IDs by label
     pd_patients = sorted([p for p, label in patient_to_label.items() if label == "PD"])
     hc_patients = sorted([p for p, label in patient_to_label.items() if label == "HC"])
+    if len(pd_patients) < num_folds or len(hc_patients) < num_folds:
+        msg = "num_folds cannot exceed the number of PD and HC patients"
+        raise ValueError(msg)
 
     # 3. Shuffle patients deterministically using random.Random
     rng = random.Random(seed)
@@ -134,62 +151,9 @@ def stratified_group_k_fold(records: list, num_folds: int = 5, seed: int = 42) -
 # -------------------------------------------------------------------------
 # Metrics Calculation (Pure Python/No scikit-learn dependency)
 # -------------------------------------------------------------------------
-def compute_roc_auc(y_true: list[int], y_scores: list[float]) -> float:
-    """Compute the Area Under the Receiver Operating Characteristic Curve (ROC AUC)."""
-    paired = list(zip(y_true, y_scores, strict=True))
-    paired.sort(key=lambda x: x[1], reverse=True)
-
-    n_pos = sum(1 for y, _ in paired if y == 1)
-    n_neg = len(paired) - n_pos
-
-    if n_pos == 0 or n_neg == 0:
-        return 0.5
-
-    auc = 0.0
-    fp, tp = 0, 0
-    prev_fp, prev_tp = 0, 0
-    prev_score = float("-inf")
-
-    for y, score in paired:
-        if score != prev_score:
-            auc += (fp - prev_fp) * (tp + prev_tp) / 2.0
-            prev_fp = fp
-            prev_tp = tp
-            prev_score = score
-        if y == 1:
-            tp += 1
-        else:
-            fp += 1
-
-    auc += (n_neg - prev_fp) * (n_pos + prev_tp) / 2.0
-    return auc / (n_pos * n_neg)
-
-
 def compute_fold_metrics(y_true: list[int], y_pred: list[int], y_prob: list[float]) -> dict[str, float]:
-    """Compute Sensitivity, Specificity, Balanced Accuracy, and ROC AUC."""
-    tp, fp, tn, fn = 0, 0, 0, 0
-    for yt, yp in zip(y_true, y_pred, strict=True):
-        if yt == 1 and yp == 1:
-            tp += 1
-        elif yt == 0 and yp == 1:
-            fp += 1
-        elif yt == 0 and yp == 0:
-            tn += 1
-        elif yt == 1 and yp == 0:
-            fn += 1
-
-    sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0.0
-    balanced_acc = (sensitivity + specificity) / 2.0
-    roc_auc = compute_roc_auc(y_true, y_prob)
-
-    return {
-        "sensitivity": sensitivity,
-        "specificity": specificity,
-        "balanced_accuracy": balanced_acc,
-        "roc_auc": roc_auc,
-        "accuracy": (tp + tn) / len(y_true) if len(y_true) > 0 else 0.0,
-    }
+    """Compute Sensitivity, Specificity, Balanced Accuracy, and ROC AUC using the package metrics."""
+    return compute_metrics(y_true, y_pred, y_prob)
 
 
 # -------------------------------------------------------------------------
@@ -197,6 +161,9 @@ def compute_fold_metrics(y_true: list[int], y_pred: list[int], y_prob: list[floa
 # -------------------------------------------------------------------------
 def run_training() -> None:
     """Parse arguments and train the patient-stratified cross-validation baseline."""
+    import timm
+    from torchvision import transforms
+
     parser = argparse.ArgumentParser(description="Train a leakage-safe patient-stratified baseline on spiral number 3.")
     parser.add_argument("--data-dir", type=str, default="data/hemato", help="Path to hemato dataset directory.")
     parser.add_argument("--epochs", type=int, default=5, help="Number of training epochs per fold.")
@@ -230,6 +197,9 @@ def run_training() -> None:
     spiral3_records = [r for r in records if r.image_path.name == "test3_spi_centered.png"]
     print(f"Total drawings found (overall hemato): {len(records)}")
     print(f"Total spiral 3 drawings selected: {len(spiral3_records)}")
+    if not spiral3_records:
+        msg = "No test3_spi_centered.png records found in the Hemato dataset"
+        raise ValueError(msg)
 
     # Get label index mapping
     label_to_index = {"HC": 0, "PD": 1}
@@ -240,7 +210,7 @@ def run_training() -> None:
     # Print baseline stats
     patient_to_label = {}
     for r in spiral3_records:
-        pid = r.image_path.parent.parent.parent.name
+        pid = r.subject_id
         patient_to_label[pid] = r.label
     p_labels = list(patient_to_label.values())
     print(f"Patient distribution: {p_labels.count('PD')} PD, {p_labels.count('HC')} HC")
@@ -250,10 +220,8 @@ def run_training() -> None:
 
     train_transform = transforms.Compose([
         transforms.Resize((args.image_size, args.image_size)),
-        transforms.RandomRotation(15, fill=255),
-        transforms.RandomHorizontalFlip(),
-        transforms.RandomVerticalFlip(),
-        transforms.ColorJitter(brightness=0.1, contrast=0.1),
+        transforms.RandomRotation(10, fill=255),
+        transforms.ColorJitter(brightness=0.08, contrast=0.08),
         transforms.ToTensor(),
         normalize,
     ])
@@ -276,8 +244,8 @@ def run_training() -> None:
         val_records = split["val"]
 
         # Log patient composition
-        train_patients = {r.image_path.parent.parent.parent.name for r in train_records}
-        val_patients = {r.image_path.parent.parent.parent.name for r in val_records}
+        train_patients = {r.subject_id for r in train_records}
+        val_patients = {r.subject_id for r in val_records}
         print(f"Train set: {len(train_records)} drawings from {len(train_patients)} patients")
         print(f"Val set: {len(val_records)} drawings from {len(val_patients)} patients")
         assert train_patients.isdisjoint(val_patients), "Patient leakage detected!"
@@ -407,7 +375,7 @@ def run_training() -> None:
         all_history.append({"fold": fold_idx + 1, "best_metrics": best_metrics, "epochs": fold_history})
 
     # -------------------------------------------------------------------------
-    # Aggregate and consolidated CV metrics report
+    # Aggregate and consolidated CV metrics plots
     # -------------------------------------------------------------------------
     print("\n=========================================================================")
     print("CONSOLIDATED CROSS-VALIDATION BASELINE PERFORMANCE")
@@ -424,9 +392,6 @@ def run_training() -> None:
     print(f"Average Specificity (HC):  {avg_specificity:.4f}")
     print(f"Average ROC-AUC:           {avg_roc_auc:.4f}")
     print("=========================================================================")
-
-    # Save full training history to JSON
-    import json
 
     history_data = {
         "model_type": args.model_type,
@@ -451,15 +416,33 @@ def run_training() -> None:
         json.dump(history_data, f, indent=2)
     print(f"Saved complete training history and metrics to: {history_path}")
 
-    # Generate HTML interactive report if generator module is available
-    try:
-        from generate_report import generate_html_report
+    plot_paths = write_metric_plots(
+        runs_dir,
+        {
+            "test_metrics": history_data["consolidated"],
+            "history": _average_fold_history(all_history),
+        },
+    )
+    print("Saved baseline plots:")
+    for path in plot_paths:
+        print(f"  {path}")
 
-        report_path = runs_dir / "baseline_report.html"
-        generate_html_report(history_path, report_path)
-        print(f"Interactive visual report successfully generated at: {report_path}")
-    except ImportError:
-        print("Note: generate_report module not yet created. Skipping visual report generation.")
+
+def _average_fold_history(all_history: list[dict]) -> list[dict]:
+    """Return epoch-level average validation metrics across folds."""
+    epoch_to_values: dict[int, list[float]] = {}
+    for fold in all_history:
+        for row in fold["epochs"]:
+            epoch_to_values.setdefault(int(row["epoch"]), []).append(float(row["balanced_accuracy"]))
+
+    return [
+        {
+            "epoch": epoch,
+            "train_loss": 0.0,
+            "val_metrics": {"balanced_accuracy": sum(values) / len(values)},
+        }
+        for epoch, values in sorted(epoch_to_values.items())
+    ]
 
 
 if __name__ == "__main__":

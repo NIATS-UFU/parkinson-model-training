@@ -1,39 +1,36 @@
 """Frozen DINO encoder training for Parkinson drawing crops."""
 
-from __future__ import annotations
-
 import json
+import random
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Any
 
-from parkinson_model_train.config import TrainingConfig
+import torch
+from PIL import Image
+from torch import Tensor, nn
+from torch.utils.data import DataLoader, Dataset
+from tqdm.auto import tqdm
+
 from parkinson_model_train.data import (
+    DatasetSplit,
+    ImageRecord,
+    TrainingConfig,
     labels_to_indices,
     load_manifest,
     split_by_subject,
     validate_image_paths,
     validate_split_labels,
 )
-
-if TYPE_CHECKING:
-    import torch
+from parkinson_model_train.evaluation import compute_metrics
+from parkinson_model_train.reporting import write_metric_plots
 
 
 def train_classifier(config: TrainingConfig) -> Path:
     """Train a classifier on frozen DINO embeddings and return the checkpoint path."""
     config.validate()
+    _seed_training(config.seed)
 
-    import timm
-    import torch
-    from torch import nn
-    from torch.utils.data import DataLoader
-
-    records = load_manifest(
-        config.manifest_path,
-        image_column=config.image_column,
-        subject_column=config.subject_column,
-        label_column=config.label_column,
-    )
+    records = load_manifest(config.manifest_path)
     validate_image_paths(records)
     label_to_index = labels_to_indices(records)
     split = split_by_subject(
@@ -46,25 +43,35 @@ def train_classifier(config: TrainingConfig) -> Path:
 
     device = _resolve_device(config.device)
     train_transform, eval_transform = build_image_transforms(config)
-
-    train_loader = DataLoader(
-        DrawingDataset(split.train, label_to_index, train_transform),
+    train_loader = _build_data_loader(
+        split.train,
+        label_to_index,
+        train_transform,
         batch_size=config.batch_size,
+        num_workers=config.num_workers,
         shuffle=True,
-        num_workers=config.num_workers,
+        seed=config.seed,
     )
-    val_loader = DataLoader(
-        DrawingDataset(split.val, label_to_index, eval_transform),
+    val_loader = _build_data_loader(
+        split.val,
+        label_to_index,
+        eval_transform,
         batch_size=config.batch_size,
-        shuffle=False,
         num_workers=config.num_workers,
+        shuffle=False,
+        seed=None,
     )
-    test_loader = DataLoader(
-        DrawingDataset(split.test, label_to_index, eval_transform),
+    test_loader = _build_data_loader(
+        split.test,
+        label_to_index,
+        eval_transform,
         batch_size=config.batch_size,
-        shuffle=False,
         num_workers=config.num_workers,
+        shuffle=False,
+        seed=None,
     )
+
+    import timm
 
     encoder = timm.create_model(config.model_name, pretrained=True, num_classes=0).to(device)
     encoder.eval()
@@ -76,19 +83,26 @@ def train_classifier(config: TrainingConfig) -> Path:
     optimizer = torch.optim.AdamW(classifier.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
     loss_fn = nn.CrossEntropyLoss()
 
-    best_val_accuracy = -1.0
+    best_val_metric = -1.0
     best_state_dict = None
+    history = []
     config.output_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path = config.output_dir / "best_classifier.pt"
 
     for epoch in range(1, config.epochs + 1):
         train_loss = _train_epoch(encoder, classifier, train_loader, optimizer, loss_fn, device)
-        val_metrics = (
-            _evaluate(encoder, classifier, val_loader, loss_fn, device) if split.val else {"loss": 0.0, "accuracy": 0.0}
-        )
-        print(f"epoch={epoch} train_loss={train_loss:.4f} val_accuracy={val_metrics['accuracy']:.4f}")
-        if not split.val or val_metrics["accuracy"] >= best_val_accuracy:
-            best_val_accuracy = val_metrics["accuracy"]
+        val_metrics = _evaluate(encoder, classifier, val_loader, loss_fn, device, label_to_index) if split.val else {}
+        val_acc_str = f"val_accuracy={val_metrics.get('accuracy', 0.0):.4f}"
+        if "balanced_accuracy" in val_metrics:
+            val_acc_str += f" val_balanced_accuracy={val_metrics['balanced_accuracy']:.4f}"
+        print(f"epoch={epoch} train_loss={train_loss:.4f} {val_acc_str}")
+        history.append({"epoch": epoch, "train_loss": train_loss, "val_metrics": val_metrics})
+
+        metric_name = "balanced_accuracy" if "balanced_accuracy" in val_metrics else "accuracy"
+        val_metric_val = val_metrics.get(metric_name, 0.0)
+
+        if not split.val or val_metric_val >= best_val_metric:
+            best_val_metric = val_metric_val
             best_state_dict = {key: value.detach().cpu().clone() for key, value in classifier.state_dict().items()}
             torch.save(
                 {
@@ -105,17 +119,22 @@ def train_classifier(config: TrainingConfig) -> Path:
 
     if best_state_dict is not None:
         classifier.load_state_dict(best_state_dict)
-    test_metrics = (
-        _evaluate(encoder, classifier, test_loader, loss_fn, device) if split.test else {"loss": 0.0, "accuracy": 0.0}
-    )
-    _write_run_summary(config.output_dir, label_to_index, split, test_metrics)
+    test_metrics = _evaluate(encoder, classifier, test_loader, loss_fn, device, label_to_index) if split.test else {}
+
+    summary = _write_run_summary(config.output_dir, label_to_index, split, test_metrics, history)
+    write_metric_plots(config.output_dir, summary)
     return checkpoint_path
 
 
-class DrawingDataset:
+class DrawingDataset(Dataset):
     """PyTorch dataset for labelled drawing crops."""
 
-    def __init__(self, records, label_to_index, transform):
+    def __init__(
+        self,
+        records: list[ImageRecord],
+        label_to_index: dict[str, int],
+        transform: Any,
+    ) -> None:
         self.records = records
         self.label_to_index = label_to_index
         self.transform = transform
@@ -123,16 +142,14 @@ class DrawingDataset:
     def __len__(self) -> int:
         return len(self.records)
 
-    def __getitem__(self, index: int):
-        from PIL import Image
-
+    def __getitem__(self, index: int) -> tuple[Tensor, int]:
         record = self.records[index]
         with Image.open(record.image_path) as image:
             tensor = self.transform(image.convert("RGB"))
         return tensor, self.label_to_index[record.label]
 
 
-def build_image_transforms(config: TrainingConfig) -> tuple[object, object]:
+def build_image_transforms(config: TrainingConfig) -> tuple[Any, Any]:
     """Build train and evaluation image transforms for DINO classifiers."""
     from torchvision import transforms
 
@@ -166,6 +183,7 @@ def build_image_transforms(config: TrainingConfig) -> tuple[object, object]:
 
 
 def _augmentation_summary(config: TrainingConfig) -> dict[str, bool | float | int]:
+    """Return augmentation settings written into checkpoints."""
     return {
         "augment": config.augment,
         "rotation_degrees": config.rotation_degrees,
@@ -180,10 +198,27 @@ def _augmentation_summary(config: TrainingConfig) -> dict[str, bool | float | in
     }
 
 
-def _train_epoch(encoder, classifier, data_loader, optimizer, loss_fn, device) -> float:
-    import torch
-    from tqdm.auto import tqdm
+def _build_data_loader(
+    records: list[ImageRecord],
+    label_to_index: dict[str, int],
+    transform: Any,
+    *,
+    batch_size: int,
+    num_workers: int,
+    shuffle: bool,
+    seed: int | None,
+) -> DataLoader:
+    generator = _torch_generator(seed) if seed is not None else None
+    return DataLoader(
+        DrawingDataset(records, label_to_index, transform),
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=num_workers,
+        generator=generator,
+    )
 
+
+def _train_epoch(encoder, classifier, data_loader, optimizer, loss_fn, device) -> float:
     classifier.train()
     total_loss = 0.0
     total_items = 0
@@ -199,17 +234,27 @@ def _train_epoch(encoder, classifier, data_loader, optimizer, loss_fn, device) -
         optimizer.step()
         total_loss += loss.item() * labels.size(0)
         total_items += labels.size(0)
+    if total_items == 0:
+        msg = "Training data loader produced no batches"
+        raise ValueError(msg)
     return total_loss / total_items
 
 
-def _evaluate(encoder, classifier, data_loader, loss_fn, device) -> dict[str, float]:
-    import torch
-    from tqdm.auto import tqdm
-
+def _evaluate(encoder, classifier, data_loader, loss_fn, device, label_to_index) -> dict[str, float]:
     classifier.eval()
     total_loss = 0.0
-    total_correct = 0
     total_items = 0
+    y_true_list = []
+    y_pred_list = []
+    y_prob_list = []
+
+    pos_index = 1
+    if len(label_to_index) == 2:
+        for lbl, idx in label_to_index.items():
+            if lbl.upper() in {"PD", "PATIENT"}:
+                pos_index = idx
+                break
+
     with torch.no_grad():
         for images, labels in tqdm(data_loader, desc="eval", leave=False):
             images = images.to(device)
@@ -218,20 +263,59 @@ def _evaluate(encoder, classifier, data_loader, loss_fn, device) -> dict[str, fl
             logits = classifier(features)
             loss = loss_fn(logits, labels)
             total_loss += loss.item() * labels.size(0)
-            total_correct += (logits.argmax(dim=1) == labels).sum().item()
+
+            probs = torch.softmax(logits, dim=1)
+            preds = logits.argmax(dim=1)
+
+            y_true_list.extend(labels.cpu().tolist())
+            y_pred_list.extend(preds.cpu().tolist())
+            if len(label_to_index) == 2:
+                y_prob_list.extend(probs[:, pos_index].cpu().tolist())
             total_items += labels.size(0)
-    return {"loss": total_loss / total_items, "accuracy": total_correct / total_items}
+
+    if total_items == 0:
+        msg = "Evaluation data loader produced no batches"
+        raise ValueError(msg)
+
+    metrics = {"loss": total_loss / total_items}
+    if len(label_to_index) == 2:
+        y_true_mapped = [1 if y == pos_index else 0 for y in y_true_list]
+        y_pred_mapped = [1 if y == pos_index else 0 for y in y_pred_list]
+        binary_metrics = compute_metrics(y_true_mapped, y_pred_mapped, y_prob_list)
+        metrics.update(binary_metrics)
+    else:
+        correct = sum(1 for yt, yp in zip(y_true_list, y_pred_list, strict=True) if yt == yp)
+        metrics["accuracy"] = correct / total_items if total_items > 0 else 0.0
+
+    return metrics
 
 
 def _resolve_device(device: str) -> torch.device:
-    import torch
-
     if device == "auto":
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
     return torch.device(device)
 
 
-def _write_run_summary(output_dir, label_to_index, split, test_metrics) -> None:
+def _seed_training(seed: int) -> None:
+    random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def _torch_generator(seed: int) -> torch.Generator:
+    generator = torch.Generator()
+    generator.manual_seed(seed)
+    return generator
+
+
+def _write_run_summary(
+    output_dir: Path,
+    label_to_index: dict[str, int],
+    split: DatasetSplit,
+    test_metrics: dict[str, float],
+    history: list[dict[str, object]],
+) -> dict[str, object]:
     summary = {
         "label_to_index": label_to_index,
         "split_counts": {"train": len(split.train), "val": len(split.val), "test": len(split.test)},
@@ -241,5 +325,7 @@ def _write_run_summary(output_dir, label_to_index, split, test_metrics) -> None:
             "test": len({record.subject_id for record in split.test}),
         },
         "test_metrics": test_metrics,
+        "history": history,
     }
     Path(output_dir, "run_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    return summary
