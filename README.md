@@ -11,6 +11,7 @@ Training repo for the NIATS Parkinson drawing baseline: spiral/wave crops from [
 - **CLI entry point:** `main-cli`
 - **Main assumption:** split by subject, not by image, to avoid leakage.
 - **Training guide:** [`docs/training_walkthrough.md`](docs/training_walkthrough.md)
+- **Colab notebook:** [`notebooks/colab_training.ipynb`](notebooks/colab_training.ipynb)
 
 ## Quick Start
 
@@ -42,6 +43,8 @@ main-cli train \
 ```
 
 Read [`docs/training_walkthrough.md`](docs/training_walkthrough.md) for a notebook-style walkthrough with diagrams, plotting snippets, and practical checks before interpreting metrics.
+
+For GPU training on Google Colab, open [`notebooks/colab_training.ipynb`](notebooks/colab_training.ipynb), select a GPU runtime, mount Google Drive, and edit the dataset path cell.
 
 ## Workflow
 
