@@ -4,6 +4,7 @@ Hyperparameters quoted verbatim from Huang et al. 2024 §9. Parameters Huang did
 not specify are defaulted with explicit justification in METHODS_SECTION_NOTES.
 This pipeline fine-tunes a full VGG19 end-to-end and requires a GPU in practice.
 """
+
 from __future__ import annotations
 
 from typing import ClassVar
@@ -12,22 +13,29 @@ import numpy as np
 
 from ..protocol import Pipeline
 
-
 # Verbatim from Huang §9
 LR = 1e-4
 EPOCHS = 50
 BATCH_SIZE = 32
-T_0 = 10           # CosineAnnealingWarmRestarts; Huang did not specify — default
-T_MULT = 2         # default
-ETA_MIN = 1e-6     # default
+T_0 = 10  # CosineAnnealingWarmRestarts; Huang did not specify — default
+T_MULT = 2  # default
+ETA_MIN = 1e-6  # default
 
 
 class HuangVGG19(Pipeline):
     name: ClassVar[str] = "huang_vgg19"
     FREE_HYPERPARAMETERS: ClassVar[list[str]] = [
-        "lr", "batch_size", "epochs",
-        "scheduler", "T_0", "T_mult", "eta_min",
-        "rotation_degrees", "image_size", "norm_mean", "norm_std",
+        "lr",
+        "batch_size",
+        "epochs",
+        "scheduler",
+        "T_0",
+        "T_mult",
+        "eta_min",
+        "rotation_degrees",
+        "image_size",
+        "norm_mean",
+        "norm_std",
         "freezing_layers",
     ]
     METHODS_SECTION_NOTES: ClassVar[str] = (
@@ -56,7 +64,8 @@ class HuangVGG19(Pipeline):
 
     def _build(self):
         import torch
-        from torchvision.models import vgg19, VGG19_Weights
+        from torchvision.models import VGG19_Weights, vgg19
+
         model = vgg19(weights=VGG19_Weights.IMAGENET1K_V1)
         in_features = model.classifier[-1].in_features
         model.classifier[-1] = torch.nn.Linear(in_features, 2)
@@ -75,18 +84,18 @@ class HuangVGG19(Pipeline):
         use_amp = self._device == "cuda"
         self._model = self._build().to(self._device)
 
-        optim = torch.optim.Adam(
-            (p for p in self._model.parameters() if p.requires_grad), lr=self.lr
-        )
-        sched = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            optim, T_0=T_0, T_mult=T_MULT, eta_min=ETA_MIN
-        )
+        optim = torch.optim.Adam((p for p in self._model.parameters() if p.requires_grad), lr=self.lr)
+        sched = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim, T_0=T_0, T_mult=T_MULT, eta_min=ETA_MIN)
         loss_fn = torch.nn.CrossEntropyLoss()
         scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
         from . import loader_kwargs
+
         loader = DataLoader(
-            dataset, batch_size=self.batch_size, shuffle=True,
-            pin_memory=use_amp, **loader_kwargs(),
+            dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            pin_memory=use_amp,
+            **loader_kwargs(),
         )
 
         self._model.train()
@@ -110,9 +119,13 @@ class HuangVGG19(Pipeline):
         if self._model is None:
             raise RuntimeError("predict_proba called before fit")
         from . import loader_kwargs
+
         loader = DataLoader(
-            dataset, batch_size=self.batch_size, shuffle=False,
-            pin_memory=(self._device == "cuda"), **loader_kwargs(),
+            dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            pin_memory=(self._device == "cuda"),
+            **loader_kwargs(),
         )
         self._model.eval()
         out: list[np.ndarray] = []

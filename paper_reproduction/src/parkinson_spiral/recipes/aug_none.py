@@ -3,6 +3,7 @@
 Resize + ImageNet normalize only. Same in train and eval. This is the baseline
 against which AUG-Huang / AUG-Dogan are compared.
 """
+
 from __future__ import annotations
 
 import torch
@@ -22,13 +23,11 @@ class AugNone(Recipe):
             normalization_std=std,
             channels=3,
         )
-        self._tf = transforms.Compose(
-            [
-                transforms.Resize((image_size, image_size)),
-                transforms.ToTensor(),
-                transforms.Normalize(mean=list(mean), std=list(std)),
-            ]
-        )
+        self._tf = transforms.Compose([
+            transforms.Resize((image_size, image_size)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=list(mean), std=list(std)),
+        ])
 
     def pre_split_ops(self, img: Image.Image) -> Image.Image:
         return img.convert("RGB")

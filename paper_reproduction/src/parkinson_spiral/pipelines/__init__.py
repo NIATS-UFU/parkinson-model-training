@@ -1,8 +1,8 @@
 """Pipeline registry. Each module declares its class; this file collects them."""
+
 from __future__ import annotations
 
 import os
-from typing import Type
 
 from ..protocol import Pipeline
 
@@ -29,32 +29,40 @@ def get_pipeline(name: str, **kwargs) -> Pipeline:
         raise ValueError(f"unknown pipeline {name!r}; available: {_PIPELINE_NAMES}")
     if name == "dinov2_probe":
         from .dinov2_probe import DinoV2Probe
+
         return DinoV2Probe(**kwargs)
     if name == "folador_hog":
         from .folador_hog import FoladorHOG
+
         return FoladorHOG(**kwargs)
     if name == "huang_vgg19":
         from .huang_vgg19 import HuangVGG19
+
         return HuangVGG19(**kwargs)
     if name == "dogan_triple":
         from .dogan_triple import DoganTriple
+
         return DoganTriple(**kwargs)
     raise AssertionError("unreachable")
 
 
-def get_pipeline_class(name: str) -> Type[Pipeline]:
+def get_pipeline_class(name: str) -> type[Pipeline]:
     """Return the class (without instantiating) — used for FREE_HYPERPARAMETERS / METHODS_SECTION_NOTES."""
     if name == "dinov2_probe":
         from .dinov2_probe import DinoV2Probe
+
         return DinoV2Probe
     if name == "folador_hog":
         from .folador_hog import FoladorHOG
+
         return FoladorHOG
     if name == "huang_vgg19":
         from .huang_vgg19 import HuangVGG19
+
         return HuangVGG19
     if name == "dogan_triple":
         from .dogan_triple import DoganTriple
+
         return DoganTriple
     raise ValueError(f"unknown pipeline {name!r}")
 

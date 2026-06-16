@@ -9,6 +9,7 @@ parameters — the same spec always maps to the same id, and the shipped result
 files in `results/` are keyed by it. The hash formula is frozen: changing it
 would break the link between the catalog and the shipped results.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -30,13 +31,13 @@ VALID_SPLIT_SOURCES = {"published", "subject-clean", "cv-fold", "cross-dataset"}
 @dataclass(frozen=True)
 class CellSpec:
     pipeline_name: str
-    recipe_name: str          # 'AUG-None' | 'AUG-Huang' | 'AUG-Dogan'
-    train_source: str         # 'kaggle' | 'folador' | 'hemato'
+    recipe_name: str  # 'AUG-None' | 'AUG-Huang' | 'AUG-Dogan'
+    train_source: str  # 'kaggle' | 'folador' | 'hemato'
     test_source: str
-    split_source: str         # see VALID_SPLIT_SOURCES
-    cv_fold: int | None       # required iff split_source == 'cv-fold'
-    task_filter: str          # 'spiral' (the paper uses spiral drawings only)
-    target_column: str        # 'class_label' (binary PD vs healthy)
+    split_source: str  # see VALID_SPLIT_SOURCES
+    cv_fold: int | None  # required iff split_source == 'cv-fold'
+    task_filter: str  # 'spiral' (the paper uses spiral drawings only)
+    target_column: str  # 'class_label' (binary PD vs healthy)
     augment_then_split: bool  # literature's leaky augment-before-split order (one fidelity cell)
     seed: int
     pipeline_kwargs: dict[str, Any] = field(default_factory=dict)
@@ -50,14 +51,9 @@ class CellSpec:
 
     def validate(self) -> None:
         if self.split_source not in VALID_SPLIT_SOURCES:
-            raise ValueError(
-                f"unknown split_source {self.split_source!r}; "
-                f"valid: {sorted(VALID_SPLIT_SOURCES)}"
-            )
+            raise ValueError(f"unknown split_source {self.split_source!r}; valid: {sorted(VALID_SPLIT_SOURCES)}")
         if self.target_column != "class_label":
-            raise ValueError(
-                f"target_column must be 'class_label' (binary PD task); got {self.target_column!r}"
-            )
+            raise ValueError(f"target_column must be 'class_label' (binary PD task); got {self.target_column!r}")
         if self.split_source == "cv-fold":
             if self.cv_fold is None:
                 raise ValueError("cv_fold required when split_source=='cv-fold'")

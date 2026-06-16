@@ -5,6 +5,7 @@ and never triggers training. All reported numbers are subject-level accuracy
 (the paper's canonical level), pooling predictions across the cells that make up
 a logical result (e.g. the 5 CV folds of a diagonal).
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -99,9 +100,13 @@ def subject_suite(
 def diagonal_ceiling(cells, preds, pipeline: str, recipe: str, source: str, **kw) -> dict | None:
     """Pooled out-of-fold subject-accuracy ceiling for one within-dataset diagonal."""
     return subject_accuracy(
-        cells, preds,
-        pipeline_name=pipeline, recipe_name=recipe,
-        train_source=source, test_source=source, split_source="cv-fold",
+        cells,
+        preds,
+        pipeline_name=pipeline,
+        recipe_name=recipe,
+        train_source=source,
+        test_source=source,
+        split_source="cv-fold",
         **kw,
     )
 
@@ -109,9 +114,13 @@ def diagonal_ceiling(cells, preds, pipeline: str, recipe: str, source: str, **kw
 def cross_value(cells, preds, pipeline: str, recipe: str, train: str, test: str, **kw) -> dict | None:
     """Subject-accuracy for one cross-dataset off-diagonal transfer cell."""
     return subject_accuracy(
-        cells, preds,
-        pipeline_name=pipeline, recipe_name=recipe,
-        train_source=train, test_source=test, split_source="cross-dataset",
+        cells,
+        preds,
+        pipeline_name=pipeline,
+        recipe_name=recipe,
+        train_source=train,
+        test_source=test,
+        split_source="cross-dataset",
         **kw,
     )
 

@@ -5,9 +5,10 @@ image/session aggregations exist as internal building blocks only. Kaggle
 subject IDs are filename-derived (mostly 1 image/subject), so its subject-level
 aggregation largely coincides with per-image scoring.
 """
+
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
@@ -103,8 +104,7 @@ def metrics_at_all_levels(df_pred: pd.DataFrame) -> dict[str, dict[str, float] |
     }
     sess = aggregate_to_session(df_pred)
     out["session"] = (
-        binary_metrics(sess["y_true"].to_numpy(), sess["y_proba_pos"].to_numpy())
-        if not sess.empty else None
+        binary_metrics(sess["y_true"].to_numpy(), sess["y_proba_pos"].to_numpy()) if not sess.empty else None
     )
     subj = aggregate_to_subject(df_pred)
     out["subject"] = binary_metrics(subj["y_true"].to_numpy(), subj["y_proba_pos"].to_numpy())

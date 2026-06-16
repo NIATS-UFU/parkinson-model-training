@@ -22,24 +22,23 @@ Usage:
   python models/export_hemato_probe.py --data-root <path-with-hemato/>
   python models/export_hemato_probe.py --manifest results/manifest.parquet
 """
+
 from __future__ import annotations
 
 import argparse
 import json
 import sys
-import tempfile
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 from parkinson_spiral import DEFAULT_SEED  # noqa: E402
-from parkinson_spiral.data import build_unified_manifest, assign_subject_folds  # noqa: E402
+from parkinson_spiral.data import assign_subject_folds, build_unified_manifest  # noqa: E402
 from parkinson_spiral.data.dataset import PreprocessedSpiralDataset  # noqa: E402
-from parkinson_spiral.recipes import get_recipe  # noqa: E402
 from parkinson_spiral.pipelines.dinov2_probe import DinoV2Probe  # noqa: E402
+from parkinson_spiral.recipes import get_recipe  # noqa: E402
 
 PAPER_HEMATO_CEILING = 0.739
 SANITY_TOL = 0.02  # the fit is deterministic on CPU; allow a small margin for backbone/runtime drift.
@@ -76,11 +75,13 @@ def _oof_sanity(hem: pd.DataFrame) -> float:
         probe = DinoV2Probe()
         probe.fit(PreprocessedSpiralDataset(tr, recipe, is_train=True), seed=DEFAULT_SEED)
         proba = probe.predict_proba(PreprocessedSpiralDataset(te, recipe, is_train=False))
-        oof.append(pd.DataFrame({
-            "subject_id": te["subject_id"].to_numpy(),
-            "y_true": (te["class_label"] == "parkinson").astype(int).to_numpy(),
-            "y_proba_pos": proba[:, 1],
-        }))
+        oof.append(
+            pd.DataFrame({
+                "subject_id": te["subject_id"].to_numpy(),
+                "y_true": (te["class_label"] == "parkinson").astype(int).to_numpy(),
+                "y_proba_pos": proba[:, 1],
+            })
+        )
     pooled = pd.concat(oof, ignore_index=True)
     subj = aggregate_to_subject(pooled)
     return float((subj["y_true"].to_numpy() == (subj["y_proba_pos"].to_numpy() >= 0.5).astype(int)).mean())
@@ -97,8 +98,8 @@ def main() -> None:
 
     try:
         import skops.io as sio
-    except ImportError:
-        raise SystemExit("skops is required: pip install -e '.[hf]'")
+    except ImportError as err:
+        raise SystemExit("skops is required: pip install -e '.[hf]'") from err
 
     hem = _hemato_spiral(_load_manifest(args))
     print(f"Hemato spiral images: {len(hem)}  subjects: {hem['subject_id'].nunique()}")

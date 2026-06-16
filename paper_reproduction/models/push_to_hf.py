@@ -8,6 +8,7 @@ Usage:
   python models/push_to_hf.py --repo-id NIATS-UFU/parkinson-spiral-dinov2-hemato
   python models/push_to_hf.py --repo-id <org/name> --model-dir models/exported --private
 """
+
 from __future__ import annotations
 
 import argparse
@@ -27,14 +28,13 @@ def main() -> None:
 
     try:
         from huggingface_hub import HfApi, upload_folder
-    except ImportError:
-        raise SystemExit("huggingface_hub is required: pip install -e '.[hf]'")
+    except ImportError as err:
+        raise SystemExit("huggingface_hub is required: pip install -e '.[hf]'") from err
 
     if not (args.model_dir / "parkinson_spiral_dinov2_hemato.skops").is_file():
         raise SystemExit(f"no exported model in {args.model_dir}. Run models/export_hemato_probe.py first.")
     if not (args.model_dir / "README.md").is_file():
-        print("WARNING: no README.md (model card) in the export folder — the Hub page will be bare.",
-              file=sys.stderr)
+        print("WARNING: no README.md (model card) in the export folder — the Hub page will be bare.", file=sys.stderr)
 
     api = HfApi(token=args.token)
     api.create_repo(repo_id=args.repo_id, repo_type="model", private=args.private, exist_ok=True)

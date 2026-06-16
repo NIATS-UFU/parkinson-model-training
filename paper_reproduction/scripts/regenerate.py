@@ -6,6 +6,7 @@ figure in seconds. Run this first.
 
 Usage:  python scripts/regenerate.py [--out paper_artifacts]
 """
+
 from __future__ import annotations
 
 import runpy

@@ -11,6 +11,7 @@ Two fine-tune modes:
   in METHODS_SECTION_NOTES).
 - fine_tune=False: all three backbones frozen, ImageNet weights only.
 """
+
 from __future__ import annotations
 
 from typing import ClassVar
@@ -21,20 +22,27 @@ from sklearn.svm import SVC
 
 from ..protocol import Pipeline
 
-
 FINE_TUNE_EPOCHS = 20
-FINE_TUNE_LR = 1e-3   # Dogan didn't state - Adam default
+FINE_TUNE_LR = 1e-3  # Dogan didn't state - Adam default
 FINE_TUNE_BATCH = 32
 NCA_RETENTION = 0.17  # Dogan section 5
-INPUT_SIZE = 224      # Dogan's spec; both DenseNet/Xception are ImageNet-default 224x224
+INPUT_SIZE = 224  # Dogan's spec; both DenseNet/Xception are ImageNet-default 224x224
 
 
 class DoganTriple(Pipeline):
     name: ClassVar[str] = "dogan_triple"
     FREE_HYPERPARAMETERS: ClassVar[list[str]] = [
-        "fine_tune", "lr", "batch_size", "epochs", "image_size",
-        "ncomponents_pct", "svm_kernel", "svm_C",
-        "rotation_set", "color_jitter_params", "augment_then_split",
+        "fine_tune",
+        "lr",
+        "batch_size",
+        "epochs",
+        "image_size",
+        "ncomponents_pct",
+        "svm_kernel",
+        "svm_C",
+        "rotation_set",
+        "color_jitter_params",
+        "augment_then_split",
     ]
     METHODS_SECTION_NOTES: ClassVar[str] = (
         "Dogan et al. (2024) hybrid pipeline reproduced faithfully across two ML frameworks. "
@@ -67,8 +75,8 @@ class DoganTriple(Pipeline):
         self.ncomponents_pct = ncomponents_pct
         self.svm_kernel = svm_kernel
         self.svm_C = svm_C
-        self._torch_backbones: list = []     # [DenseNet201, Xception]
-        self._keras_nasnet = None             # tf.keras NASNetMobile
+        self._torch_backbones: list = []  # [DenseNet201, Xception]
+        self._keras_nasnet = None  # tf.keras NASNetMobile
         self._keras_preprocess = None
         self._nca: NeighborhoodComponentsAnalysis | None = None
         self._svm: SVC | None = None
@@ -76,9 +84,9 @@ class DoganTriple(Pipeline):
         self._use_amp = False
 
     def _build_backbones(self):
-        import torch
         import timm
-        from torchvision.models import densenet201, DenseNet201_Weights
+        import torch
+        from torchvision.models import DenseNet201_Weights, densenet201
 
         dn = densenet201(weights=DenseNet201_Weights.IMAGENET1K_V1)
         dn.classifier = torch.nn.Identity()  # gives GAP'd features
@@ -95,8 +103,10 @@ class DoganTriple(Pipeline):
 
         # NASNetMobile via Keras - this is the faithful Dogan choice.
         import os
+
         os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
         from tensorflow.keras.applications.nasnet import NASNetMobile, preprocess_input
+
         self._keras_nasnet = NASNetMobile(
             include_top=False, weights="imagenet", pooling="avg", input_shape=(INPUT_SIZE, INPUT_SIZE, 3)
         )
@@ -116,9 +126,13 @@ class DoganTriple(Pipeline):
             wrapped = torch.nn.Sequential(backbone, head)
             optim = torch.optim.Adam(wrapped.parameters(), lr=self.lr)
             from . import loader_kwargs
+
             loader = DataLoader(
-                dataset, batch_size=self.batch_size, shuffle=True,
-                pin_memory=(self._device == "cuda"), **loader_kwargs(),
+                dataset,
+                batch_size=self.batch_size,
+                shuffle=True,
+                pin_memory=(self._device == "cuda"),
+                **loader_kwargs(),
             )
             wrapped.train()
             for _epoch in tqdm(range(self.epochs), desc="dogan-ft-epoch", leave=False):
@@ -137,6 +151,7 @@ class DoganTriple(Pipeline):
     @staticmethod
     def _feature_dim(backbone) -> int:
         import torch
+
         with torch.inference_mode():
             x = torch.zeros(1, 3, INPUT_SIZE, INPUT_SIZE, device=next(backbone.parameters()).device)
             return backbone(x).shape[-1]
@@ -144,11 +159,15 @@ class DoganTriple(Pipeline):
     def _extract(self, dataset) -> tuple[np.ndarray, np.ndarray]:
         import torch
         from torch.utils.data import DataLoader
+
         from . import loader_kwargs
 
         loader = DataLoader(
-            dataset, batch_size=self.batch_size, shuffle=False,
-            pin_memory=(self._device == "cuda"), **loader_kwargs(),
+            dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            pin_memory=(self._device == "cuda"),
+            **loader_kwargs(),
         )
         all_feats: list[np.ndarray] = []
         all_labels: list[np.ndarray] = []
@@ -173,12 +192,13 @@ class DoganTriple(Pipeline):
         # [0, 255] so Keras' preprocess_input (which expects [-1, 1] scaled from raw
         # pixels) sees the right input distribution.
         import numpy as np
+
         mean = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(1, 3, 1, 1)
         std = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(1, 3, 1, 1)
         arr = tensors.detach().cpu().numpy().astype(np.float32)
-        arr = arr * std + mean              # back to [0, 1]
+        arr = arr * std + mean  # back to [0, 1]
         arr = np.clip(arr * 255.0, 0, 255)  # to [0, 255]
-        arr = arr.transpose(0, 2, 3, 1)     # (B, H, W, C)
+        arr = arr.transpose(0, 2, 3, 1)  # (B, H, W, C)
         arr = self._keras_preprocess(arr)
         return self._keras_nasnet.predict(arr, verbose=0)
 

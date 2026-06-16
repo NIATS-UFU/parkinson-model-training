@@ -5,6 +5,7 @@ cell whose predictions already exist in `results/` is returned from cache, so a
 re-run only fills in what is missing. Re-running the whole catalog therefore
 converges to the shipped results without recomputing finished cells.
 """
+
 from __future__ import annotations
 
 import json
@@ -48,11 +49,15 @@ def resolve_split(manifest: pd.DataFrame, spec: CellSpec) -> tuple[np.ndarray, n
     if spec.split_source == "subject-clean":
         train_split = _subject_clean_resplit(manifest, spec.train_source, spec.seed)
         test_split = _subject_clean_resplit(manifest, spec.test_source, spec.seed)
-        train = task & (manifest["dataset"] == spec.train_source) & (
-            manifest.index.map(train_split.to_dict()).fillna("none") == "train"
+        train = (
+            task
+            & (manifest["dataset"] == spec.train_source)
+            & (manifest.index.map(train_split.to_dict()).fillna("none") == "train")
         )
-        test = task & (manifest["dataset"] == spec.test_source) & (
-            manifest.index.map(test_split.to_dict()).fillna("none") == "test"
+        test = (
+            task
+            & (manifest["dataset"] == spec.test_source)
+            & (manifest.index.map(test_split.to_dict()).fillna("none") == "test")
         )
         return manifest.index[train].to_numpy(), manifest.index[test].to_numpy()
 
@@ -72,12 +77,14 @@ def _subject_clean_resplit(manifest: pd.DataFrame, dataset: str, seed: int) -> p
     if cached is not None:
         return cached
     from .data.splits import produce_subject_clean_resplit
+
     series = produce_subject_clean_resplit(manifest, dataset, test_size=0.2, random_state=seed)
     _SUBJECT_CLEAN_CACHE[key] = series
     return series
 
 
 # ---- run_cell ----
+
 
 @dataclass
 class RunPaths:
@@ -146,15 +153,13 @@ def run_cell(spec: CellSpec, paths: RunPaths, *, force: bool = False) -> dict[st
 
     # Lazy imports — keep the protocol surface importable without torch.
     from .data.dataset import PreprocessedSpiralDataset
-    from .recipes import get_recipe
     from .pipelines import get_pipeline
+    from .recipes import get_recipe
 
     manifest = pd.read_parquet(paths.manifest)
     train_idx, test_idx = resolve_split(manifest, spec)
     if len(train_idx) == 0 or len(test_idx) == 0:
-        raise ValueError(
-            f"empty split for cell {cell_id}: train={len(train_idx)}, test={len(test_idx)}"
-        )
+        raise ValueError(f"empty split for cell {cell_id}: train={len(train_idx)}, test={len(test_idx)}")
 
     train_manifest = manifest.loc[train_idx].reset_index(drop=True)
     test_manifest = manifest.loc[test_idx].reset_index(drop=True)
@@ -165,12 +170,16 @@ def run_cell(spec: CellSpec, paths: RunPaths, *, force: bool = False) -> dict[st
 
     recipe = get_recipe(spec.recipe_name, **spec.recipe_kwargs)
     train_ds = PreprocessedSpiralDataset(
-        train_manifest, recipe, is_train=True,
+        train_manifest,
+        recipe,
+        is_train=True,
         augment_then_split=spec.augment_then_split,
         target_column=spec.target_column,
     )
     test_ds = PreprocessedSpiralDataset(
-        test_manifest, recipe, is_train=False,
+        test_manifest,
+        recipe,
+        is_train=False,
         target_column=spec.target_column,
     )
 
@@ -183,18 +192,16 @@ def run_cell(spec: CellSpec, paths: RunPaths, *, force: bool = False) -> dict[st
         proba = pipeline.predict_proba(test_ds)
 
     y_true = (test_manifest["class_label"] == "parkinson").astype(int).to_numpy()
-    pred_df = pd.DataFrame(
-        {
-            "cell_id": cell_id,
-            "image_id": test_manifest["image_id"].astype(str).to_numpy(),
-            "subject_id": test_manifest["subject_id"].astype(str).to_numpy(),
-            "session_id": test_manifest["session_id"].astype("string").to_numpy(),
-            "dataset": test_manifest["dataset"].astype(str).to_numpy(),
-            "drawing_type": test_manifest["drawing_type"].astype(str).to_numpy(),
-            "y_true": y_true,
-            "y_proba_pos": proba[:, 1],
-        }
-    )
+    pred_df = pd.DataFrame({
+        "cell_id": cell_id,
+        "image_id": test_manifest["image_id"].astype(str).to_numpy(),
+        "subject_id": test_manifest["subject_id"].astype(str).to_numpy(),
+        "session_id": test_manifest["session_id"].astype("string").to_numpy(),
+        "dataset": test_manifest["dataset"].astype(str).to_numpy(),
+        "drawing_type": test_manifest["drawing_type"].astype(str).to_numpy(),
+        "y_true": y_true,
+        "y_proba_pos": proba[:, 1],
+    })
 
     paths.predictions_dir.mkdir(parents=True, exist_ok=True)
     pred_path = paths.predictions_dir / f"{cell_id}.parquet"

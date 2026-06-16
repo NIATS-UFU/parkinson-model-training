@@ -17,6 +17,7 @@ In `augment_then_split=True` mode this recipe produces 8 deterministic copies pe
 source image (used only by the one Dogan fidelity cell that reproduces the
 literature's augment-before-split order).
 """
+
 from __future__ import annotations
 
 import torch
@@ -77,9 +78,7 @@ class AugDogan(Recipe):
 
         train_ops = [
             transforms.Resize((image_size, image_size)),
-            transforms.RandomChoice(
-                [_RotateBy(0), _RotateBy(90), _RotateBy(180), _RotateBy(270)]
-            ),
+            transforms.RandomChoice([_RotateBy(0), _RotateBy(90), _RotateBy(180), _RotateBy(270)]),
             transforms.RandomHorizontalFlip(p=0.5),
             transforms.RandomVerticalFlip(p=0.5),
             self._color,
@@ -88,21 +87,17 @@ class AugDogan(Recipe):
         ]
         self._train_tf = transforms.Compose(train_ops)
 
-        self._eval_tf = transforms.Compose(
-            [
-                transforms.Resize((image_size, image_size)),
-                transforms.ToTensor(),
-                transforms.Normalize(mean=list(mean), std=list(std)),
-            ]
-        )
+        self._eval_tf = transforms.Compose([
+            transforms.Resize((image_size, image_size)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=list(mean), std=list(std)),
+        ])
         # Deterministic-variant mode: rotation/flip already applied by caller,
         # so only the normalize stage is needed.
-        self._variant_tail = transforms.Compose(
-            [
-                transforms.ToTensor(),
-                transforms.Normalize(mean=list(mean), std=list(std)),
-            ]
-        )
+        self._variant_tail = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(mean=list(mean), std=list(std)),
+        ])
 
     def pre_split_ops(self, img: Image.Image) -> Image.Image:
         return img.convert("RGB")

@@ -8,6 +8,7 @@ Usage:
   python models/predict.py --model-dir models/exported --images path/to/spirals/
   python models/predict.py --model-dir models/exported --images one_spiral.png
 """
+
 from __future__ import annotations
 
 import argparse
@@ -15,7 +16,6 @@ import json
 import sys
 from pathlib import Path
 
-import numpy as np
 from PIL import Image
 
 REPO = Path(__file__).resolve().parents[1]
@@ -41,10 +41,10 @@ def main() -> None:
     args = ap.parse_args()
 
     try:
-        import torch
         import skops.io as sio
-    except ImportError:
-        raise SystemExit("torch and skops are required: pip install -e '.[train,hf]'")
+        import torch
+    except ImportError as err:
+        raise SystemExit("torch and skops are required: pip install -e '.[train,hf]'") from err
 
     model_path = args.model_dir / "parkinson_spiral_dinov2_hemato.skops"
     if not model_path.is_file():

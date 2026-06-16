@@ -1,8 +1,9 @@
 """Recipe registry. Keyed by the paper's recipe names."""
-from .base import Recipe, RecipeMeta
-from .aug_none import AugNone
-from .aug_huang import AugHuang
+
 from .aug_dogan import AugDogan
+from .aug_huang import AugHuang
+from .aug_none import AugNone
+from .base import Recipe, RecipeMeta
 
 REGISTRY: dict[str, type[Recipe]] = {
     "AUG-None": AugNone,

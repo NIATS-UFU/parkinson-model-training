@@ -5,6 +5,7 @@ in `dataset.PreprocessedSpiralDataset`.
 
 Dataset names follow the paper: kaggle, folador (Folador et al. 2021), hemato.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -45,7 +46,7 @@ VALID_LABELS = {"healthy", "parkinson"}
 
 def make_image_id(dataset: str, rel_path: str) -> str:
     """Stable short hash so manifest rows survive path-root changes."""
-    h = hashlib.sha1(f"{dataset}:{rel_path}".encode("utf-8")).hexdigest()
+    h = hashlib.sha1(f"{dataset}:{rel_path}".encode()).hexdigest()
     return f"{dataset}:{h[:16]}"
 
 
@@ -77,9 +78,9 @@ def enforce_schema(df: pd.DataFrame) -> pd.DataFrame:
 
 def build_unified_manifest(data_root: Path) -> pd.DataFrame:
     """Concatenate per-dataset manifests; downstream callers add cv_fold."""
-    from .kaggle import build_kaggle_manifest
     from .folador import build_folador_manifest
     from .hemato import build_hemato_manifest
+    from .kaggle import build_kaggle_manifest
 
     parts = [
         build_kaggle_manifest(data_root),

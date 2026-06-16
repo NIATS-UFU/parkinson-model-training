@@ -3,6 +3,7 @@
 Used as a context manager around `pipeline.fit` and `pipeline.predict_proba`
 inside `runner.run_cell`. Falls back to None values when CUDA is unavailable.
 """
+
 from __future__ import annotations
 
 import time
@@ -13,9 +14,10 @@ class ComputeMonitor:
         self.wall_seconds: float | None = None
         self.gpu_peak_mb: float | None = None
 
-    def __enter__(self) -> "ComputeMonitor":
+    def __enter__(self) -> ComputeMonitor:
         try:
             import torch
+
             self._cuda = torch.cuda.is_available()
             if self._cuda:
                 torch.cuda.reset_peak_memory_stats()
@@ -28,4 +30,5 @@ class ComputeMonitor:
         self.wall_seconds = time.perf_counter() - self._t0
         if self._cuda:
             import torch
-            self.gpu_peak_mb = torch.cuda.max_memory_allocated() / (2 ** 20)
+
+            self.gpu_peak_mb = torch.cuda.max_memory_allocated() / (2**20)

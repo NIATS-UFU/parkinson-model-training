@@ -10,6 +10,7 @@ Grouping mirrors the paper:
   Group B (24)  cross-dataset off-diagonals   -> Table "cross-dataset", matrix off-diagonals, asymmetry
   Group C (3)   in-domain published-split fidelity -> Table "b1-fidelity" Released-split column
 """
+
 from __future__ import annotations
 
 from . import DEFAULT_SEED
@@ -66,8 +67,9 @@ def _cross(pipeline: str, recipe: str, pipeline_kwargs: dict | None = None) -> l
     ]
 
 
-def _published(pipeline: str, recipe: str, source: str, augment_then_split: bool,
-               pipeline_kwargs: dict | None = None) -> CellSpec:
+def _published(
+    pipeline: str, recipe: str, source: str, augment_then_split: bool, pipeline_kwargs: dict | None = None
+) -> CellSpec:
     return CellSpec(
         pipeline_name=pipeline,
         recipe_name=recipe,

@@ -10,6 +10,7 @@ Decisions:
   the in-domain ceiling is a within-dataset CV mean for every dataset — not a
   single high-variance subject-clean draw.
 """
+
 from __future__ import annotations
 
 import warnings
@@ -40,11 +41,16 @@ def _assign_one_dataset(out: pd.DataFrame, dataset: str, n_splits: int, random_s
 
     try:
         from sklearn.model_selection import StratifiedGroupKFold
+
         splitter = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
         splits = list(splitter.split(sub, y=y, groups=groups))
     except (ImportError, TypeError):
-        warnings.warn("StratifiedGroupKFold unavailable; falling back to GroupKFold (no class stratification)")
+        warnings.warn(
+            "StratifiedGroupKFold unavailable; falling back to GroupKFold (no class stratification)",
+            stacklevel=2,
+        )
         from sklearn.model_selection import GroupKFold
+
         splitter = GroupKFold(n_splits=n_splits)
         splits = list(splitter.split(sub, y=y, groups=groups))
 
@@ -85,7 +91,7 @@ def produce_subject_clean_resplit(
     if sub.empty:
         return pd.Series(dtype="string")
     gss = GroupShuffleSplit(n_splits=1, test_size=test_size, random_state=random_state)
-    (train_idx, test_idx), = gss.split(sub, groups=sub["subject_id"].to_numpy())
+    ((train_idx, test_idx),) = gss.split(sub, groups=sub["subject_id"].to_numpy())
     out = pd.Series(index=sub.index, dtype="string")
     out.iloc[train_idx] = "train"
     out.iloc[test_idx] = "test"

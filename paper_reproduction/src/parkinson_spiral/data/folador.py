@@ -12,6 +12,7 @@ Subject ID convention:
     `folador:1H` vs `folador:1P`. The label LETTER (H/P) is read from the
     filename prefix and cross-checked against the folder name (higido/parkinson).
 """
+
 from __future__ import annotations
 
 import re
@@ -62,18 +63,16 @@ def build_folador_manifest(data_root: Path) -> pd.DataFrame:
                         notes = "folador-filename-did-not-match-expected-pattern"
 
                     rel = img_path.relative_to(data_root).as_posix()
-                    rows.append(
-                        {
-                            "image_id": make_image_id("folador", rel),
-                            "dataset": "folador",
-                            "subject_id": subject_id,
-                            "drawing_type": drawing_type,
-                            "class_label": class_label,
-                            "published_split": split_label,
-                            "cv_fold": pd.NA,
-                            "session_id": session_id,
-                            "file_path": str(img_path.resolve()),
-                            "source_notes": notes,
-                        }
-                    )
+                    rows.append({
+                        "image_id": make_image_id("folador", rel),
+                        "dataset": "folador",
+                        "subject_id": subject_id,
+                        "drawing_type": drawing_type,
+                        "class_label": class_label,
+                        "published_split": split_label,
+                        "cv_fold": pd.NA,
+                        "session_id": session_id,
+                        "file_path": str(img_path.resolve()),
+                        "source_notes": notes,
+                    })
     return pd.DataFrame(rows, columns=MANIFEST_COLUMNS)

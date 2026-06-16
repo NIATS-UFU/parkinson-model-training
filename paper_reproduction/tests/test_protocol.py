@@ -1,6 +1,6 @@
 """CellSpec identity + validation contracts."""
-import pytest
 
+import pytest
 from parkinson_spiral import DEFAULT_SEED
 from parkinson_spiral.protocol import CellSpec
 
@@ -25,9 +25,9 @@ def _spec(**over):
 def test_cell_id_is_deterministic_and_16_hex():
     spec = _spec()
     cid = spec.cell_id
-    assert cid == _spec().cell_id            # same params -> same id
+    assert cid == _spec().cell_id  # same params -> same id
     assert len(cid) == 16
-    int(cid, 16)                              # hex-decodable
+    int(cid, 16)  # hex-decodable
 
 
 def test_cell_id_changes_with_any_field():
@@ -54,8 +54,7 @@ def test_cv_fold_must_be_within_dataset():
 
 def test_cross_dataset_must_be_off_diagonal():
     with pytest.raises(ValueError):
-        _spec(split_source="cross-dataset", cv_fold=None,
-              train_source="kaggle", test_source="kaggle").validate()
+        _spec(split_source="cross-dataset", cv_fold=None, train_source="kaggle", test_source="kaggle").validate()
 
 
 def test_valid_spec_passes():

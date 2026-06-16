@@ -3,6 +3,7 @@
 The paper reports the SVM_linear head (the default). HOG params and classifier
 hyperparameters are Folador's published numbers, copied verbatim. CPU-only.
 """
+
 from __future__ import annotations
 
 from typing import ClassVar
@@ -13,7 +14,6 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.svm import SVC
 
 from ..protocol import Pipeline
-
 
 # Verbatim Folador HOG params.
 HOG_PARAMS = dict(
@@ -28,6 +28,7 @@ HOG_PARAMS = dict(
 def quantify_image(image_2d: np.ndarray) -> np.ndarray:
     """Folador HOG feature extraction; copied verbatim."""
     from skimage.feature import hog
+
     return hog(image_2d, **HOG_PARAMS)
 
 
@@ -37,7 +38,10 @@ _VALID_CLASSIFIERS = {"RFC", "KNN", "SVM_linear", "CNN1D"}
 class FoladorHOG(Pipeline):
     name: ClassVar[str] = "folador_hog"
     FREE_HYPERPARAMETERS: ClassVar[list[str]] = [
-        "classifier", "hog_orientations", "hog_pixels_per_cell", "hog_cells_per_block",
+        "classifier",
+        "hog_orientations",
+        "hog_pixels_per_cell",
+        "hog_cells_per_block",
     ]
     METHODS_SECTION_NOTES: ClassVar[str] = (
         "Folador et al. (2021) pipeline: HOG features (orientations=9, pixels_per_cell="
@@ -60,10 +64,15 @@ class FoladorHOG(Pipeline):
 
     def _extract(self, dataset) -> tuple[np.ndarray, np.ndarray]:
         from torch.utils.data import DataLoader
+
         from . import loader_kwargs
+
         # HOG runs CPU-only on numpy; workers parallelize PIL decode + transform (Linux only).
         loader = DataLoader(
-            dataset, batch_size=self.batch_size, shuffle=False, **loader_kwargs(),
+            dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            **loader_kwargs(),
         )
         feats: list[np.ndarray] = []
         labels: list[np.ndarray] = []
@@ -85,6 +94,7 @@ class FoladorHOG(Pipeline):
                 # of which preprocessing recipe is paired upstream.
                 if img_unit.shape != (self.HOG_INPUT_SIZE, self.HOG_INPUT_SIZE):
                     from PIL import Image
+
                     pil = Image.fromarray((img_unit * 255).astype(np.uint8), mode="L")
                     pil = pil.resize((self.HOG_INPUT_SIZE, self.HOG_INPUT_SIZE), Image.BILINEAR)
                     img_unit = np.asarray(pil, dtype=np.float32) / 255.0
@@ -119,9 +129,10 @@ class FoladorHOG(Pipeline):
 def _build_cnn1d_keras(input_dim: int, seed: int):
     """Folador 1D-CNN architecture, copied verbatim."""
     import os
+
     os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
     import tensorflow as tf
-    from tensorflow.keras import layers, regularizers, models
+    from tensorflow.keras import layers, models, regularizers
 
     tf.random.set_seed(seed)
     reg = regularizers.l2(1e-4)
@@ -138,6 +149,7 @@ def _build_cnn1d_keras(input_dim: int, seed: int):
         layers.Dropout(0.2),
         layers.Dense(1, activation="sigmoid", kernel_regularizer=reg),
     ])
-    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),
-                  loss="binary_crossentropy", metrics=["accuracy"])
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3), loss="binary_crossentropy", metrics=["accuracy"]
+    )
     return model

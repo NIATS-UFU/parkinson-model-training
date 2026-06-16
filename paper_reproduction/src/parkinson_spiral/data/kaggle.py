@@ -10,6 +10,7 @@ Subject ID convention:
     (class-local indexing). To make subject-level grouping safe, we fold the
     class letter into subject_id: `kaggle:V01H` vs `kaggle:V01P`.
 """
+
 from __future__ import annotations
 
 import re
@@ -47,18 +48,16 @@ def build_kaggle_manifest(data_root: Path) -> pd.DataFrame:
                         continue
                     rel = img_path.relative_to(data_root).as_posix()
                     sid = _subject_id(img_path.name, label)
-                    rows.append(
-                        {
-                            "image_id": make_image_id("kaggle", rel),
-                            "dataset": "kaggle",
-                            "subject_id": sid,
-                            "drawing_type": drawing_type,
-                            "class_label": label,
-                            "published_split": split_label,
-                            "cv_fold": pd.NA,
-                            "session_id": None,
-                            "file_path": str(img_path.resolve()),
-                            "source_notes": None,
-                        }
-                    )
+                    rows.append({
+                        "image_id": make_image_id("kaggle", rel),
+                        "dataset": "kaggle",
+                        "subject_id": sid,
+                        "drawing_type": drawing_type,
+                        "class_label": label,
+                        "published_split": split_label,
+                        "cv_fold": pd.NA,
+                        "session_id": None,
+                        "file_path": str(img_path.resolve()),
+                        "source_notes": None,
+                    })
     return pd.DataFrame(rows, columns=MANIFEST_COLUMNS)

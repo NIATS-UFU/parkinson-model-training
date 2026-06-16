@@ -18,6 +18,7 @@ Subject ID + class label parsing:
 Drawing type: row_type == "spi" → spiral, row_type == "sen" → wave.
 Session ID: the leaf folder name (enables per-session aggregation).
 """
+
 from __future__ import annotations
 
 import re
@@ -76,18 +77,16 @@ def build_hemato_manifest(data_root: Path) -> pd.DataFrame:
         else:
             abs_path = (output_root / recorded).resolve()
         manifest_rel = abs_path.relative_to(data_root.resolve()).as_posix()
-        rows.append(
-            {
-                "image_id": make_image_id("hemato", manifest_rel),
-                "dataset": "hemato",
-                "subject_id": subject_id,
-                "drawing_type": drawing_type,
-                "class_label": class_label,
-                "published_split": None,  # Hemato has no published split; cv_fold assigned downstream
-                "cv_fold": pd.NA,
-                "session_id": session_id,
-                "file_path": str(abs_path),
-                "source_notes": None,
-            }
-        )
+        rows.append({
+            "image_id": make_image_id("hemato", manifest_rel),
+            "dataset": "hemato",
+            "subject_id": subject_id,
+            "drawing_type": drawing_type,
+            "class_label": class_label,
+            "published_split": None,  # Hemato has no published split; cv_fold assigned downstream
+            "cv_fold": pd.NA,
+            "session_id": session_id,
+            "file_path": str(abs_path),
+            "source_notes": None,
+        })
     return pd.DataFrame(rows, columns=MANIFEST_COLUMNS)

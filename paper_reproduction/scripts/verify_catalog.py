@@ -9,6 +9,7 @@ Exit 0 = match. Exit 1 = mismatch (prints what differs).
 
 Usage:  python scripts/verify_catalog.py
 """
+
 from __future__ import annotations
 
 import sys
@@ -17,7 +18,7 @@ from pathlib import Path
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from parkinson_spiral.catalog import all_cells, EXPECTED_N_CELLS  # noqa: E402
+from parkinson_spiral.catalog import EXPECTED_N_CELLS, all_cells  # noqa: E402
 
 
 def main() -> int:

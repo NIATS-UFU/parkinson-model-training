@@ -8,6 +8,7 @@ and __getitem__ decodes the linear index into (row, variant). This is only used
 by the one Dogan fidelity cell that reproduces the literature's augment-before-split
 order. Everywhere else, augmentation is applied after the split (the honest order).
 """
+
 from __future__ import annotations
 
 import pandas as pd
@@ -52,10 +53,6 @@ class PreprocessedSpiralDataset(Dataset):
             tensor = self.recipe.get_variant(img, variant_idx)
         else:
             img = self.recipe.pre_split_ops(img)
-            tensor = (
-                self.recipe.train_augment(img)
-                if self.is_train
-                else self.recipe.eval_transform(img)
-            )
+            tensor = self.recipe.train_augment(img) if self.is_train else self.recipe.eval_transform(img)
         label = CLASS_LABEL_TO_INT[row["class_label"]]
         return tensor, label, row["image_id"]

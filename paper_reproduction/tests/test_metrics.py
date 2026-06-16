@@ -1,8 +1,8 @@
 """Binary metrics, subject aggregation, bootstrap CI."""
+
 import numpy as np
 import pandas as pd
 import pytest
-
 from parkinson_spiral.metrics import (
     aggregate_to_subject,
     binary_metrics,
@@ -53,8 +53,11 @@ def test_bootstrap_ci_is_deterministic_and_brackets_point():
         "y_true": [0, 0, 1, 1, 0, 1, 1, 0],
         "y_proba_pos": [0.1, 0.3, 0.9, 0.6, 0.2, 0.7, 0.8, 0.4],
     })
-    acc = lambda yt, yp: float((yt == (yp >= 0.5).astype(int)).mean())
+
+    def acc(yt, yp):
+        return float((yt == (yp >= 0.5).astype(int)).mean())
+
     a = percentile_bootstrap_ci(df, acc, seed=20260516)
     b = percentile_bootstrap_ci(df, acc, seed=20260516)
-    assert a == b                              # same seed -> identical
+    assert a == b  # same seed -> identical
     assert a["ci_lo"] <= a["point"] <= a["ci_hi"]

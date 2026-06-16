@@ -14,6 +14,7 @@ are omitted), so you can, e.g., build a Kaggle+Folador-only manifest.
 
 Usage:  python scripts/build_manifest.py --data-root <path> [--out results/manifest.parquet]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -21,7 +22,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from parkinson_spiral.data import build_unified_manifest, assign_subject_folds  # noqa: E402
+from parkinson_spiral.data import assign_subject_folds, build_unified_manifest  # noqa: E402
 
 
 def main() -> None:
@@ -33,9 +34,7 @@ def main() -> None:
 
     manifest = build_unified_manifest(args.data_root)
     if manifest.empty:
-        raise SystemExit(
-            f"no images found under {args.data_root}. Check the layout in docs/DATA.md."
-        )
+        raise SystemExit(f"no images found under {args.data_root}. Check the layout in docs/DATA.md.")
     manifest = assign_subject_folds(manifest)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)

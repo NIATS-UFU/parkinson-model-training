@@ -14,6 +14,7 @@ Examples:
   python scripts/reproduce.py --manifest results/manifest.parquet --out runs/fresh
   python scripts/reproduce.py --manifest ... --pipeline dinov2_probe   # CPU subset only
 """
+
 from __future__ import annotations
 
 import argparse
@@ -33,8 +34,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--manifest", type=Path, default=repo / "results" / "manifest.parquet")
     ap.add_argument("--out", type=Path, default=repo / "runs" / "reproduce")
-    ap.add_argument("--pipeline", action="append", default=None,
-                    help="restrict to these pipeline name(s); repeatable")
+    ap.add_argument("--pipeline", action="append", default=None, help="restrict to these pipeline name(s); repeatable")
     ap.add_argument("--dry-run", action="store_true", help="list cells and exit (no training)")
     ap.add_argument("--force", action="store_true", help="recompute even if cached")
     args = ap.parse_args()
@@ -49,8 +49,10 @@ def main() -> None:
         for c in cells:
             gpu = " [GPU]" if c.pipeline_name in GPU_PIPELINES else ""
             fold = f" fold={c.cv_fold}" if c.cv_fold is not None else ""
-            print(f"  {c.cell_id}  {c.pipeline_name:13s} {c.recipe_name:9s} "
-                  f"{c.train_source}->{c.test_source} [{c.split_source}]{fold}{gpu}")
+            print(
+                f"  {c.cell_id}  {c.pipeline_name:13s} {c.recipe_name:9s} "
+                f"{c.train_source}->{c.test_source} [{c.split_source}]{fold}{gpu}"
+            )
         return
 
     if not args.manifest.is_file():
@@ -64,8 +66,10 @@ def main() -> None:
         row = run_cell(spec, paths, force=args.force)
         acc = row.get("subject_accuracy")
         acc_s = f"{acc:.3f}" if isinstance(acc, (int, float)) else "n/a"
-        print(f"[{i}/{len(cells)}] {spec.pipeline_name} {spec.recipe_name} "
-              f"{spec.train_source}->{spec.test_source} -> subj_acc={acc_s}")
+        print(
+            f"[{i}/{len(cells)}] {spec.pipeline_name} {spec.recipe_name} "
+            f"{spec.train_source}->{spec.test_source} -> subj_acc={acc_s}"
+        )
 
     print(f"done -> {args.out}")
 

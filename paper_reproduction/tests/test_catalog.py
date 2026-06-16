@@ -1,4 +1,5 @@
 """The catalog enumerates exactly the 97 paper cells, all valid and unique."""
+
 from parkinson_spiral.catalog import (
     EXPECTED_N_CELLS,
     all_cells,
@@ -14,9 +15,9 @@ def test_total_is_97():
 
 
 def test_group_sizes_match_paper():
-    assert len(group_a()) == 70   # in-domain CV ceilings
-    assert len(group_b()) == 24   # cross-dataset off-diagonals
-    assert len(group_c()) == 3    # published-split fidelity
+    assert len(group_a()) == 70  # in-domain CV ceilings
+    assert len(group_b()) == 24  # cross-dataset off-diagonals
+    assert len(group_c()) == 3  # published-split fidelity
 
 
 def test_cell_ids_unique():

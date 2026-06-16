@@ -4,6 +4,7 @@ The harness instantiates a Recipe, wraps it with `PreprocessedSpiralDataset`, an
 never has to know which paper the recipe came from. New recipes plug in by
 subclassing `Recipe` and registering in `recipes/__init__.py`.
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -39,16 +40,13 @@ class Recipe(ABC):
     augment_then_split: bool = False
 
     @abstractmethod
-    def pre_split_ops(self, img: Image.Image) -> Image.Image:
-        ...
+    def pre_split_ops(self, img: Image.Image) -> Image.Image: ...
 
     @abstractmethod
-    def train_augment(self, img: Image.Image) -> torch.Tensor:
-        ...
+    def train_augment(self, img: Image.Image) -> torch.Tensor: ...
 
     @abstractmethod
-    def eval_transform(self, img: Image.Image) -> torch.Tensor:
-        ...
+    def eval_transform(self, img: Image.Image) -> torch.Tensor: ...
 
     def variants_per_image(self) -> int:
         """How many deterministic copies a single source image produces when

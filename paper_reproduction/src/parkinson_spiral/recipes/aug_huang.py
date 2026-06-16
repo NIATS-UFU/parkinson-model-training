@@ -11,6 +11,7 @@ Verbatim spec + our documented defaults:
 | Image size       | 224x224                            | 224                            |
 | Normalize        | mean=0.5/std=0.5 per channel       | mean=0.5/std=0.5 (faithful)    |
 """
+
 from __future__ import annotations
 
 import torch
@@ -52,13 +53,11 @@ class AugHuang(Recipe):
         ]
         self._train_tf = transforms.Compose(train_ops)
 
-        self._eval_tf = transforms.Compose(
-            [
-                transforms.Resize((image_size, image_size)),
-                transforms.ToTensor(),
-                transforms.Normalize(mean=list(mean), std=list(std)),
-            ]
-        )
+        self._eval_tf = transforms.Compose([
+            transforms.Resize((image_size, image_size)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=list(mean), std=list(std)),
+        ])
 
     def pre_split_ops(self, img: Image.Image) -> Image.Image:
         return img.convert("RGB")
