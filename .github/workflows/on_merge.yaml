@@ -55,4 +55,3 @@ jobs:
             echo "version=${{ steps.patch_release.outputs.version }}" >> $GITHUB_OUTPUT
             echo "tag=${{ steps.patch_release.outputs.tag }}" >> $GITHUB_OUTPUT
           fi
-
