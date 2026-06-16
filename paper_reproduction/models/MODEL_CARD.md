@@ -54,15 +54,16 @@ from PIL import Image
 from parkinson_spiral.recipes import get_recipe
 
 cfg = json.load(open("config.json"))
-probe = sio.load("parkinson_spiral_dinov2_hemato.skops",
-                 trusted=sio.get_untrusted_types(file="parkinson_spiral_dinov2_hemato.skops"))
+probe = sio.load(
+    "parkinson_spiral_dinov2_hemato.skops", trusted=sio.get_untrusted_types(file="parkinson_spiral_dinov2_hemato.skops")
+)
 backbone = torch.hub.load("facebookresearch/dinov2", "dinov2_vitb14").eval()
 tf = get_recipe("AUG-None").eval_transform
 
 x = tf(Image.open("spiral.png").convert("RGB")).unsqueeze(0)
 with torch.inference_mode():
     feat = backbone(x).numpy()
-p_pd = probe.predict_proba(feat)[0, 1]   # P(Parkinson's)
+p_pd = probe.predict_proba(feat)[0, 1]  # P(Parkinson's)
 ```
 
 Inputs are Archimedean-spiral drawings; preprocessing is AUG-None (resize 224,
