@@ -70,7 +70,8 @@ def aggregate_to_session(df_pred: pd.DataFrame, threshold: float = 0.5) -> pd.Da
     if s.empty:
         return s.assign(y_pred=pd.Series(dtype=int))
     grouped = (
-        s.groupby(["subject_id", "session_id"])
+        s
+        .groupby(["subject_id", "session_id"])
         .agg(
             y_proba_pos=("y_proba_pos", "mean"),
             y_true=("y_true", "first"),
@@ -85,7 +86,8 @@ def aggregate_to_session(df_pred: pd.DataFrame, threshold: float = 0.5) -> pd.Da
 def aggregate_to_subject(df_pred: pd.DataFrame, threshold: float = 0.5) -> pd.DataFrame:
     """Mean P(PD) + majority-vote per subject_id."""
     grouped = (
-        df_pred.groupby("subject_id")
+        df_pred
+        .groupby("subject_id")
         .agg(
             y_proba_pos=("y_proba_pos", "mean"),
             y_true=("y_true", "first"),
