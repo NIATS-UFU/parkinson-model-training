@@ -1,7 +1,5 @@
 """Frozen DINO encoder training for Parkinson drawing crops."""
 
-from __future__ import annotations
-
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -223,7 +221,7 @@ def _evaluate(encoder, classifier, data_loader, loss_fn, device) -> dict[str, fl
     return {"loss": total_loss / total_items, "accuracy": total_correct / total_items}
 
 
-def _resolve_device(device: str) -> torch.device:
+def _resolve_device(device: str) -> "torch.device":
     import torch
 
     if device == "auto":

@@ -6,8 +6,6 @@ CPU-only (the frozen backbone is a public download; only the linear probe is fit
 by us). Falls back to `vit_size="vits14"` if vitb14 OOMs.
 """
 
-from __future__ import annotations
-
 from typing import ClassVar
 
 import numpy as np
@@ -16,6 +14,7 @@ from sklearn.linear_model import LogisticRegression
 from ..protocol import Pipeline
 
 _VIT_SIZES = {"vits14": 384, "vitb14": 768, "vitl14": 1024, "vitg14": 1536}
+_DINOV2_HUB_REPO = "facebookresearch/dinov2:7764ea0f912e53c92e82eb78a2a1631e92725fc8"
 
 
 class DinoV2Probe(Pipeline):
@@ -52,7 +51,7 @@ class DinoV2Probe(Pipeline):
             return
         import torch
 
-        backbone = torch.hub.load("facebookresearch/dinov2", f"dinov2_{self.vit_size}")
+        backbone = torch.hub.load(_DINOV2_HUB_REPO, f"dinov2_{self.vit_size}")
         backbone.eval()
         for p in backbone.parameters():
             p.requires_grad = False

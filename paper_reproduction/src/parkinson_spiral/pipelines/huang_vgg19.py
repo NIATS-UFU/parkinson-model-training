@@ -5,8 +5,6 @@ not specify are defaulted with explicit justification in METHODS_SECTION_NOTES.
 This pipeline fine-tunes a full VGG19 end-to-end and requires a GPU in practice.
 """
 
-from __future__ import annotations
-
 from typing import ClassVar
 
 import numpy as np

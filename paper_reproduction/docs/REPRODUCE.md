@@ -5,6 +5,9 @@
 Reproduction comes in **two layers**. Layer 1 needs a local result directory;
 Layer 2 creates one from the datasets.
 
+Use Python 3.13. The reproduction package pins its direct dependencies and ships
+`requirements-lock.txt` for a fully pinned transitive environment.
+
 | | What it does | Needs data? | Needs GPU? | Time |
 |---|---|---|---|---|
 | **Layer 1** | Rebuild every table and figure from local predictions | No | No | seconds |
@@ -20,7 +23,14 @@ the repository. A complete local result directory contains `cells.parquet` plus 
 
 ```bash
 pip install -e .
-python scripts/regenerate.py --results results --out paper_artifacts
+python scripts/paper.py regenerate --results results --out paper_artifacts
+```
+
+For exact environment recreation, install from the lock first:
+
+```bash
+pip install -r requirements-lock.txt
+pip install -e ".[train,hf]" --no-deps
 ```
 
 This reads only the local result directory and writes:
@@ -50,19 +60,19 @@ Then:
 
 ```bash
 pip install -e ".[train]"
-python scripts/build_manifest.py --data-root <path-with-kaggle-folador-hemato> \
+python scripts/paper.py build-manifest --data-root <path-with-kaggle-folador-hemato> \
     --out results/manifest.parquet
 ```
 
-A dataset that is absent is simply skipped, so you can build a Kaggle+Folador-only
-manifest and reproduce every cell that does not involve Hemato.
+A dataset that is absent is skipped by `scripts/paper.py reproduce`, so you can build a
+Kaggle+Folador-only manifest and reproduce every cell that does not involve Hemato.
 
 ### 2. Re-run the catalog
 
 ```bash
-python scripts/reproduce.py --dry-run                       # list the 97 cells
-python scripts/reproduce.py --manifest results/manifest.parquet --out results
-python scripts/verify_catalog.py --results results          # cell_ids match the catalog
+python scripts/paper.py reproduce --dry-run                       # list the 97 cells
+python scripts/paper.py reproduce --manifest results/manifest.parquet --out results
+python scripts/paper.py verify-catalog --results results          # cell_ids match the catalog
 ```
 
 `--pipeline <name>` restricts the run to one pipeline (repeatable); `--force`

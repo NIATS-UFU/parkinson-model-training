@@ -6,8 +6,6 @@ in `dataset.PreprocessedSpiralDataset`.
 Dataset names follow the paper: kaggle, folador (Folador et al. 2021), hemato.
 """
 
-from __future__ import annotations
-
 import hashlib
 from pathlib import Path
 

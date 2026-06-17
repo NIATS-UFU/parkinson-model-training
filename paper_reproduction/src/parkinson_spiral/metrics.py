@@ -6,8 +6,6 @@ subject IDs are filename-derived (mostly 1 image/subject), so its subject-level
 aggregation largely coincides with per-image scoring.
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable
 
 import numpy as np

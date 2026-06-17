@@ -1,8 +1,8 @@
 """The 97 experiment cells behind the paper, in the paper's naming.
 
-This is the declarative source of truth for what was run. `scripts/verify_catalog.py`
+This is the declarative source of truth for what was run. `scripts/paper.py verify-catalog`
 checks that the cell_ids enumerated here exactly match the cell_ids in a local
-`results/cells.parquet` (no missing, no extras), and `scripts/reproduce.py` re-runs
+`results/cells.parquet` (no missing, no extras), and `scripts/paper.py reproduce` re-runs
 these specs to regenerate the predictions from scratch.
 
 Grouping mirrors the paper:
@@ -10,8 +10,6 @@ Grouping mirrors the paper:
   Group B (24)  cross-dataset off-diagonals   -> Table "cross-dataset", matrix off-diagonals, asymmetry
   Group C (3)   in-domain published-split fidelity -> Table "b1-fidelity" Released-split column
 """
-
-from __future__ import annotations
 
 from . import DEFAULT_SEED
 from .protocol import CellSpec

@@ -1,17 +1,11 @@
-"""Regenerate the paper's four tables + two TikZ figures from local results.
+"""Consolidated CLI for paper reproduction tasks.
 
-No training, no GPU — reads only `results/` and writes:
-  <out>/results_tables.md                          (b1-fidelity, cv-ceiling, cross-dataset, h4-cost)
-  <out>/figures/tikz/fig1_crossdataset_matrices.tex
-  <out>/figures/tikz/fig2_asymmetry.tex
-
-The numbers it prints are derived from local prediction parquet files.
-`scripts/regenerate.py` is a thin wrapper around this workflow.
-
-Usage:  python scripts/make_paper_tables_figures.py [--out paper_artifacts]
+Usage:
+    python scripts/paper.py build-manifest --data-root <path> --out results/manifest.parquet
+    python scripts/paper.py reproduce --manifest results/manifest.parquet --out results
+    python scripts/paper.py regenerate --results results --out paper_artifacts
+    python scripts/paper.py verify-catalog --results results
 """
-
-from __future__ import annotations
 
 import argparse
 import sys
@@ -22,7 +16,9 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import parkinson_spiral.analysis as A  # noqa: E402
+from parkinson_spiral.catalog import EXPECTED_N_CELLS, all_cells  # noqa: E402
 from parkinson_spiral.pipelines import get_pipeline_class  # noqa: E402
+from parkinson_spiral.runner import RunPaths, run_cell  # noqa: E402
 
 SOURCES = ("kaggle", "folador", "hemato")
 SHORT = {"kaggle": "K", "folador": "F", "hemato": "H"}
@@ -50,6 +46,85 @@ TRAINING_REGIME = {
     "dogan_triple": "3 backbones fine-tuned + NCA + linear SVM",
     "huang_vgg19": "end-to-end fine-tune, 50 epochs",
 }
+GPU_PIPELINES = {"huang_vgg19", "dogan_triple"}
+PREDICTION_COLUMNS = {
+    "cell_id",
+    "image_id",
+    "subject_id",
+    "session_id",
+    "dataset",
+    "drawing_type",
+    "y_true",
+    "y_proba_pos",
+}
+
+
+def build_manifest_command(args: argparse.Namespace) -> int:
+    """Build the unified manifest and assign subject-level CV folds."""
+    from parkinson_spiral.data import assign_subject_folds, build_unified_manifest
+
+    manifest = build_unified_manifest(args.data_root)
+    if manifest.empty:
+        raise SystemExit(f"no images found under {args.data_root}. Check the layout in docs/DATA.md.")
+    manifest = assign_subject_folds(manifest)
+
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    manifest.to_parquet(args.out, index=False)
+
+    by_ds = manifest.groupby("dataset").size().to_dict()
+    print(f"wrote {len(manifest)} rows -> {args.out}")
+    print(f"datasets: {by_ds}")
+    print(f"spiral rows: {int((manifest['drawing_type'] == 'spiral').sum())}")
+    return 0
+
+
+def reproduce_command(args: argparse.Namespace) -> int:
+    """Run the selected experiment cells from the catalog."""
+    cells = all_cells()
+    if args.pipeline:
+        keep = set(args.pipeline)
+        cells = [c for c in cells if c.pipeline_name in keep]
+
+    print(f"{len(cells)} cells selected")
+    if args.dry_run:
+        for c in cells:
+            gpu = " [GPU]" if c.pipeline_name in GPU_PIPELINES else ""
+            fold = f" fold={c.cv_fold}" if c.cv_fold is not None else ""
+            print(
+                f"  {c.cell_id}  {c.pipeline_name:13s} {c.recipe_name:9s} "
+                f"{c.train_source}->{c.test_source} [{c.split_source}]{fold}{gpu}"
+            )
+        return 0
+
+    if not args.manifest.is_file():
+        raise SystemExit(
+            f"manifest not found: {args.manifest}. Build one with `python scripts/paper.py build-manifest` "
+            "(Layer-2 re-training needs the datasets on disk; see docs/REPRODUCE.md)."
+        )
+
+    manifest = pd.read_parquet(args.manifest, columns=["dataset"])
+    available = set(manifest["dataset"].dropna().astype(str).unique())
+    runnable = [c for c in cells if c.train_source in available and c.test_source in available]
+    skipped = len(cells) - len(runnable)
+    if skipped:
+        missing = sorted({source for c in cells for source in (c.train_source, c.test_source)} - available)
+        print(f"skipping {skipped} cells because these datasets are absent from the manifest: {missing}")
+    cells = runnable
+    if not cells:
+        raise SystemExit("no selected cells can run with the datasets present in the manifest")
+
+    paths = RunPaths(manifest=args.manifest, outputs_dir=args.out)
+    for i, spec in enumerate(cells, 1):
+        row = run_cell(spec, paths, force=args.force)
+        acc = row.get("subject_accuracy")
+        acc_s = f"{acc:.3f}" if isinstance(acc, (int, float)) else "n/a"
+        print(
+            f"[{i}/{len(cells)}] {spec.pipeline_name} {spec.recipe_name} "
+            f"{spec.train_source}->{spec.test_source} -> subj_acc={acc_s}"
+        )
+
+    print(f"done -> {args.out}")
+    return 0
 
 
 def _fmt_ci(res: dict, nd: int = 2) -> str:
@@ -297,16 +372,11 @@ def fig2_asymmetry(cells, preds) -> str:
     return "\n".join(lines) + "\n"
 
 
-# ---------------------------------------------------------------- main
+# ---------------------------------------------------------------- commands
 
 
-def main() -> None:
-    repo = Path(__file__).resolve().parents[1]
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--results", type=Path, default=repo / "results")
-    ap.add_argument("--out", type=Path, default=repo / "paper_artifacts")
-    args = ap.parse_args()
-
+def regenerate_command(args: argparse.Namespace) -> int:
+    """Regenerate paper tables and TikZ figures from local result parquet files."""
     cells, preds = A.load_results(args.results)
     out = args.out
     (out / "figures" / "tikz").mkdir(parents=True, exist_ok=True)
@@ -327,7 +397,98 @@ def main() -> None:
     print(f"wrote {out / 'results_tables.md'}")
     print(f"wrote {out / 'figures' / 'tikz' / 'fig1_crossdataset_matrices.tex'}")
     print(f"wrote {out / 'figures' / 'tikz' / 'fig2_asymmetry.tex'}")
+    return 0
+
+
+def verify_catalog_command(args: argparse.Namespace) -> int:
+    """Validate that cells.parquet and prediction files match the declared catalog."""
+    cells_path = args.results / "cells.parquet"
+    if not cells_path.is_file():
+        print(f"ERROR: {cells_path} not found", file=sys.stderr)
+        return 1
+
+    catalog = all_cells()
+    catalog_ids = {c.cell_id for c in catalog}
+    result_ids = set(pd.read_parquet(cells_path)["cell_id"])
+
+    ok = True
+    if len(catalog) != EXPECTED_N_CELLS:
+        print(f"FAIL: catalog has {len(catalog)} cells, expected {EXPECTED_N_CELLS}")
+        ok = False
+    missing = catalog_ids - result_ids
+    extra = result_ids - catalog_ids
+    if missing:
+        print(f"FAIL: {len(missing)} catalog cells missing from results: {sorted(missing)[:5]}")
+        ok = False
+    if extra:
+        print(f"FAIL: {len(extra)} result cells not in catalog: {sorted(extra)[:5]}")
+        ok = False
+
+    predictions_dir = args.results / "predictions"
+    if not predictions_dir.is_dir():
+        print(f"FAIL: predictions directory not found: {predictions_dir}")
+        ok = False
+    else:
+        for cell_id in sorted(catalog_ids & result_ids):
+            pred_path = predictions_dir / f"{cell_id}.parquet"
+            if not pred_path.is_file():
+                print(f"FAIL: prediction parquet missing for cell {cell_id}: {pred_path}")
+                ok = False
+                continue
+            pred = pd.read_parquet(pred_path)
+            missing_columns = PREDICTION_COLUMNS - set(pred.columns)
+            if missing_columns:
+                print(f"FAIL: {pred_path} missing columns: {sorted(missing_columns)}")
+                ok = False
+            if pred.empty:
+                print(f"FAIL: {pred_path} has no prediction rows")
+                ok = False
+            pred_ids = set(pred["cell_id"].astype(str).unique()) if "cell_id" in pred.columns else set()
+            if pred_ids != {cell_id}:
+                print(f"FAIL: {pred_path} contains cell_ids {sorted(pred_ids)}, expected only {cell_id}")
+                ok = False
+
+    if ok:
+        print(f"PASS: catalog and results agree on all {len(catalog_ids)} cell_ids.")
+        return 0
+    return 1
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    repo = Path(__file__).resolve().parents[1]
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    build = sub.add_parser("build-manifest", help="build unified manifest from datasets on disk")
+    build.add_argument("--data-root", type=Path, required=True, help="directory holding kaggle/ folador/ hemato/")
+    build.add_argument("--out", type=Path, default=repo / "results" / "manifest.parquet")
+    build.set_defaults(func=build_manifest_command)
+
+    reproduce = sub.add_parser("reproduce", help="run catalog cells from scratch")
+    reproduce.add_argument("--manifest", type=Path, default=repo / "results" / "manifest.parquet")
+    reproduce.add_argument("--out", type=Path, default=repo / "runs" / "reproduce")
+    reproduce.add_argument("--pipeline", action="append", default=None, help="restrict to these pipeline names")
+    reproduce.add_argument("--dry-run", action="store_true", help="list cells and exit without training")
+    reproduce.add_argument("--force", action="store_true", help="recompute even if cached")
+    reproduce.set_defaults(func=reproduce_command)
+
+    regenerate = sub.add_parser("regenerate", help="regenerate paper tables and figures from local results")
+    regenerate.add_argument("--results", type=Path, default=repo / "results")
+    regenerate.add_argument("--out", type=Path, default=repo / "paper_artifacts")
+    regenerate.set_defaults(func=regenerate_command)
+
+    verify = sub.add_parser("verify-catalog", help="verify catalog cells and prediction parquet files")
+    verify.add_argument("--results", type=Path, default=repo / "results")
+    verify.set_defaults(func=verify_catalog_command)
+
+    return parser
+
+
+def main() -> int:
+    parser = _build_parser()
+    args = parser.parse_args()
+    return args.func(args)
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

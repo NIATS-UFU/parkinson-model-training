@@ -7,6 +7,7 @@ from parkinson_spiral.catalog import (
     group_b,
     group_c,
 )
+from parkinson_spiral.runner import _recipe_kwargs_for_spec
 
 
 def test_total_is_97():
@@ -34,3 +35,14 @@ def test_folador_reports_svm_linear_head():
     folador = [c for c in all_cells() if c.pipeline_name == "folador_hog"]
     assert folador
     assert all(c.pipeline_kwargs.get("classifier") == "SVM_linear" for c in folador)
+
+
+def test_dogan_published_cell_emits_augment_then_split_variants():
+    dogan_published = [
+        c
+        for c in group_c()
+        if c.pipeline_name == "dogan_triple" and c.recipe_name == "AUG-Dogan" and c.augment_then_split
+    ]
+    assert len(dogan_published) == 1
+
+    assert _recipe_kwargs_for_spec(dogan_published[0])["augment_then_split"] is True

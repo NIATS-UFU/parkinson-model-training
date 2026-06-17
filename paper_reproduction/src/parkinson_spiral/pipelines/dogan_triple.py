@@ -12,8 +12,6 @@ Two fine-tune modes:
 - fine_tune=False: all three backbones frozen, ImageNet weights only.
 """
 
-from __future__ import annotations
-
 from typing import ClassVar
 
 import numpy as np

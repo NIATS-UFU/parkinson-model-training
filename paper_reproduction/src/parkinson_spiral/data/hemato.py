@@ -19,8 +19,6 @@ Drawing type: row_type == "spi" → spiral, row_type == "sen" → wave.
 Session ID: the leaf folder name (enables per-session aggregation).
 """
 
-from __future__ import annotations
-
 import re
 from pathlib import Path
 

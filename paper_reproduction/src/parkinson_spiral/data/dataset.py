@@ -9,8 +9,6 @@ by the one Dogan fidelity cell that reproduces the literature's augment-before-s
 order. Everywhere else, augmentation is applied after the split (the honest order).
 """
 
-from __future__ import annotations
-
 import pandas as pd
 import torch
 from PIL import Image

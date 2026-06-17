@@ -6,8 +6,6 @@ re-run only fills in what is missing. Re-running the whole catalog therefore
 converges to a complete local result directory without recomputing finished cells.
 """
 
-from __future__ import annotations
-
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -124,6 +122,13 @@ def _check_train_classes(train_manifest: pd.DataFrame, spec: CellSpec) -> None:
         )
 
 
+def _recipe_kwargs_for_spec(spec: CellSpec) -> dict[str, Any]:
+    kwargs = dict(spec.recipe_kwargs)
+    if spec.recipe_name == "AUG-Dogan":
+        kwargs.setdefault("augment_then_split", spec.augment_then_split)
+    return kwargs
+
+
 def _is_cached(paths: RunPaths, cell_id: str) -> bool:
     pred_path = paths.predictions_dir / f"{cell_id}.parquet"
     if not pred_path.is_file() or not paths.cells_path.is_file():
@@ -168,7 +173,7 @@ def run_cell(spec: CellSpec, paths: RunPaths, *, force: bool = False) -> dict[st
     _validate_manifest_paths(train_manifest, side="train", sample=5)
     _validate_manifest_paths(test_manifest, side="test", sample=5)
 
-    recipe = get_recipe(spec.recipe_name, **spec.recipe_kwargs)
+    recipe = get_recipe(spec.recipe_name, **_recipe_kwargs_for_spec(spec))
     train_ds = PreprocessedSpiralDataset(
         train_manifest,
         recipe,

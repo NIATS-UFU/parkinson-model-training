@@ -4,8 +4,6 @@ Generates a gorgeous, self-contained, interactive HTML dashboard to visualise
 epoch-by-epoch training/validation loss curves and cross-validation metrics.
 """
 
-from __future__ import annotations
-
 import json
 from pathlib import Path
 

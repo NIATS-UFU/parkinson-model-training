@@ -4,8 +4,6 @@ Resize + ImageNet normalize only. Same in train and eval. This is the baseline
 against which AUG-Huang / AUG-Dogan are compared.
 """
 
-from __future__ import annotations
-
 import torch
 from PIL import Image
 from torchvision import transforms

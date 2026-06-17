@@ -1,7 +1,5 @@
 """Dataset manifest loading and subject-level splitting utilities."""
 
-from __future__ import annotations
-
 import csv
 import os
 import random

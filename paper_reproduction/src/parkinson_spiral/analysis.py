@@ -6,8 +6,6 @@ predictions/) and never triggers training. All reported numbers are subject-leve
 a logical result (e.g. the 5 CV folds of a diagonal).
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 
 import numpy as np

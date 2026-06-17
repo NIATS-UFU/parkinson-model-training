@@ -1,8 +1,7 @@
 """Pipeline registry. Each module declares its class; this file collects them."""
 
-from __future__ import annotations
-
 import os
+import sys
 
 from ..protocol import Pipeline
 
@@ -14,7 +13,7 @@ def loader_kwargs() -> dict:
     dataset and recipe transforms — fragile and prone to worker-pool hangs — so we
     load single-process there. Linux uses `fork`, where workers are cheap and the
     GPU pipelines benefit, so we keep 2."""
-    if os.name == "nt":
+    if os.name == "nt" or sys.version_info >= (3, 14):
         return {"num_workers": 0}
     return {"num_workers": 2, "persistent_workers": True}
 

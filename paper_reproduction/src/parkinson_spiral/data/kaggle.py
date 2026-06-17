@@ -11,8 +11,6 @@ Subject ID convention:
     class letter into subject_id: `kaggle:V01H` vs `kaggle:V01P`.
 """
 
-from __future__ import annotations
-
 import re
 from pathlib import Path
 

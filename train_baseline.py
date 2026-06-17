@@ -6,8 +6,6 @@ It trains a model using standard PyTorch torchvision augmentations and evaluates
 consolidated cross-validation performance.
 """
 
-from __future__ import annotations
-
 import argparse
 import random
 from pathlib import Path

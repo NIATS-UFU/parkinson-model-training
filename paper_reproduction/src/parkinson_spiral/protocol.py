@@ -10,8 +10,6 @@ files in `results/` are keyed by it. The hash formula is frozen: changing it
 would break the link between the catalog and generated results.
 """
 
-from __future__ import annotations
-
 import hashlib
 import json
 from abc import ABC, abstractmethod

@@ -4,8 +4,6 @@ The paper reports the SVM_linear head (the default). HOG params and classifier
 hyperparameters are Folador's published numbers, copied verbatim. CPU-only.
 """
 
-from __future__ import annotations
-
 from typing import ClassVar
 
 import numpy as np

@@ -25,8 +25,11 @@ pipelines across three datasets in a full train × test factorial:
 - `notebooks/reproduce_experiments.ipynb` — the one notebook that runs everything,
   in the paper's naming.
 - `models/` — tooling to export and use the released DINOv2 + Hemato probe.
+- `requirements-lock.txt` — fully pinned transitive dependency lock for exact
+  Python 3.13 reproduction environments.
 - `docs/` — [`REPRODUCE.md`](docs/REPRODUCE.md), [`DATA.md`](docs/DATA.md),
-  [`PROVENANCE.md`](docs/PROVENANCE.md).
+  [`PROVENANCE.md`](docs/PROVENANCE.md), and review
+  [`DECISIONS.md`](docs/DECISIONS.md).
 
 ## Project structure
 
@@ -56,7 +59,7 @@ augmentation strategy, create a module under `recipes/` and register it in
 
 ```bash
 pip install -e .
-python scripts/reproduce.py --dry-run
+python scripts/paper.py reproduce --dry-run
 ```
 
 The dry run lists the paper's 97 experiment cells without requiring datasets,
@@ -70,10 +73,10 @@ need a GPU (see [`docs/REPRODUCE.md`](docs/REPRODUCE.md)).
 
 ```bash
 pip install -e ".[train]"
-python scripts/build_manifest.py --data-root <path> --out results/manifest.parquet
-python scripts/reproduce.py --manifest results/manifest.parquet --out results
-python scripts/verify_catalog.py --results results
-python scripts/regenerate.py --results results
+python scripts/paper.py build-manifest --data-root <path> --out results/manifest.parquet
+python scripts/paper.py reproduce --manifest results/manifest.parquet --out results
+python scripts/paper.py verify-catalog --results results
+python scripts/paper.py regenerate --results results
 ```
 
 Re-training is idempotent (keyed by `cell_id`): interrupted runs resume, and

@@ -11,8 +11,6 @@ Decisions:
   single high-variance subject-clean draw.
 """
 
-from __future__ import annotations
-
 import warnings
 
 import pandas as pd

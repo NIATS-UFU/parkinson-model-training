@@ -15,7 +15,7 @@ It enumerates exactly 97 experiment cells in the paper's naming, in three groups
 | **B** | 24 | Cross-dataset off-diagonal transfers (4 pipelines × 6 directions) | Table `cross-dataset`, matrices, asymmetry (Fig. 2) |
 | **C** | 3 | In-domain published-split fidelity | Table `b1-fidelity` (Released-split column) |
 
-`scripts/verify_catalog.py --results results` checks that the cell_ids enumerated
+`scripts/paper.py verify-catalog --results results` checks that the cell_ids enumerated
 by the catalog match the cell_ids in `results/cells.parquet` exactly — no missing,
 no extra.
 
@@ -44,7 +44,7 @@ The 97-cell result set is a curated subset of a larger internal benchmark run,
 restricted to exactly the experiments the paper reports. The selection is
 **deterministic and involves no retraining**: cells are selected by their
 parameters, each cell's identity is re-verified by recomputing its `cell_id`, and
-the result matches the catalog exactly (`scripts/verify_catalog.py --results results`).
+the result matches the catalog exactly (`scripts/paper.py verify-catalog --results results`).
 Every generated file uses the paper's naming throughout.
 
 Out of paper scope and therefore excluded: the dropped leakage-gap analysis, the
