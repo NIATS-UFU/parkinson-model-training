@@ -1,7 +1,7 @@
 """Post-hoc analysis: pooled out-of-fold CV ceilings, cross-dataset matrices.
 
-Every function here reads the shipped `results/` (cells.parquet + predictions/)
-and never triggers training. All reported numbers are subject-level accuracy
+Every function here reads a local `results/` directory (cells.parquet +
+predictions/) and never triggers training. All reported numbers are subject-level accuracy
 (the paper's canonical level), pooling predictions across the cells that make up
 a logical result (e.g. the 5 CV folds of a diagonal).
 """

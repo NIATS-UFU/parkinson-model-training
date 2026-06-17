@@ -5,9 +5,9 @@ Every model the harness can run is a `Pipeline` subclass exposing
 
 A `CellSpec` fully identifies one experiment. Its `cell_id` is a SHA1 over the
 canonical JSON of the spec, so a cell's identity is derived purely from its
-parameters — the same spec always maps to the same id, and the shipped result
+parameters — the same spec always maps to the same id, and generated result
 files in `results/` are keyed by it. The hash formula is frozen: changing it
-would break the link between the catalog and the shipped results.
+would break the link between the catalog and generated results.
 """
 
 from __future__ import annotations

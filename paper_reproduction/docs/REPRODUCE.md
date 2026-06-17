@@ -2,27 +2,28 @@
 
 *"Cross-Dataset Robustness of Spiral Classifiers for Parkinson's Disease Diagnosis."*
 
-Reproduction comes in **two layers**. Most readers only need Layer 1.
+Reproduction comes in **two layers**. Layer 1 needs a local result directory;
+Layer 2 creates one from the datasets.
 
 | | What it does | Needs data? | Needs GPU? | Time |
 |---|---|---|---|---|
-| **Layer 1** | Rebuild every table and figure from the shipped predictions | No | No | seconds |
+| **Layer 1** | Rebuild every table and figure from local predictions | No | No | seconds |
 | **Layer 2** | Re-train every model from scratch and regenerate the predictions | Yes | Some pipelines | hours |
 
-The headline reproducibility claim is **Layer 1**: the curated 97-cell result set
-(`results/cells.parquet` + `results/predictions/`) ships with the repo, so anyone
-can regenerate the paper's numbers with no datasets, no GPU, and no training.
+Result parquet files are generated locally and are intentionally not committed to
+the repository. A complete local result directory contains `cells.parquet` plus a
+`predictions/` directory with one parquet file per experiment cell.
 
 ---
 
-## Layer 1 — regenerate tables and figures (no data, no GPU)
+## Layer 1 — regenerate tables and figures from local results (no data, no GPU)
 
 ```bash
 pip install -e .
-python scripts/regenerate.py            # writes paper_artifacts/
+python scripts/regenerate.py --results results --out paper_artifacts
 ```
 
-This reads only `results/` and writes:
+This reads only the local result directory and writes:
 
 - `paper_artifacts/results_tables.md` — the four paper tables (`b1-fidelity`,
   `cv-ceiling`, `cross-dataset`, `h4-cost`).
@@ -30,15 +31,15 @@ This reads only `results/` and writes:
   `fig2_asymmetry.tex` — the TikZ figures.
 
 The notebook (`notebooks/reproduce_experiments.ipynb`, Section 0) does the same
-thing interactively and shows each table inline. Every number is computed from the
-shipped predictions by `src/parkinson_spiral/analysis.py` — nothing is hard-coded
+thing interactively after local results exist. Every number is computed from the
+prediction parquet files by `src/parkinson_spiral/analysis.py` — nothing is hard-coded
 except the published-literature reference values, which are clearly labelled.
 
 ---
 
 ## Layer 2 — re-train from scratch (needs data; some pipelines need a GPU)
 
-Re-training reproduces `results/predictions/` from the raw images. It is
+Re-training produces `results/predictions/` from the raw images. It is
 **idempotent**: each experiment is keyed by a `cell_id`, and a cell whose
 predictions already exist is skipped, so an interrupted run resumes cleanly.
 
@@ -60,8 +61,8 @@ manifest and reproduce every cell that does not involve Hemato.
 
 ```bash
 python scripts/reproduce.py --dry-run                       # list the 97 cells
-python scripts/reproduce.py --manifest results/manifest.parquet --out runs/fresh
-python scripts/verify_catalog.py                            # cell_ids match the catalog
+python scripts/reproduce.py --manifest results/manifest.parquet --out results
+python scripts/verify_catalog.py --results results          # cell_ids match the catalog
 ```
 
 `--pipeline <name>` restricts the run to one pipeline (repeatable); `--force`
@@ -89,6 +90,7 @@ The notebook splits this for you: **Section 1** runs the CPU-only subset, and
 
 All reported numbers are **subject-level**, pooled across the cells that make up a
 logical result (e.g. the 5 CV folds of a diagonal), with a percentile bootstrap
-95% CI (`n_resamples=1000`, `seed=20260516`). Re-deriving them from the shipped
-predictions is deterministic and exact. One small caveat about two GPU-trained
-cross-dataset AUCs is documented in [`PROVENANCE.md`](PROVENANCE.md).
+95% CI (`n_resamples=1000`, `seed=20260516`). Re-deriving them from generated
+predictions is deterministic and exact once those predictions exist locally. One
+small caveat about two GPU-trained cross-dataset AUCs is documented in
+[`PROVENANCE.md`](PROVENANCE.md).

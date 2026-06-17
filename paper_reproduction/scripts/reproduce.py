@@ -2,8 +2,8 @@
 
 This trains every model and reproduces the predictions in `results/`. It is
 idempotent: a cell whose predictions already exist is skipped, so an interrupted
-run resumes where it left off, and pointing it at the shipped `results/` is a
-no-op. Needs a built manifest (scripts/build_manifest.py) and the datasets on disk;
+run resumes where it left off. Needs a built manifest (scripts/build_manifest.py)
+and the datasets on disk;
 some pipelines need a GPU (see docs/REPRODUCE.md).
 
 Cells are keyed by cell_id, so re-running into a *fresh* output directory and then

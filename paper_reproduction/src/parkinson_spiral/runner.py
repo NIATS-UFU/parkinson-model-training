@@ -3,7 +3,7 @@
 `run_cell(spec, ...)` is the only path that trains a model. It is idempotent: a
 cell whose predictions already exist in `results/` is returned from cache, so a
 re-run only fills in what is missing. Re-running the whole catalog therefore
-converges to the shipped results without recomputing finished cells.
+converges to a complete local result directory without recomputing finished cells.
 """
 
 from __future__ import annotations

@@ -1,17 +1,18 @@
-"""V2 gate — the catalog and the shipped results describe the same 97 cells.
+"""V2 gate — the catalog and local results describe the same 97 cells.
 
 Recomputes the 97 cell_ids from `catalog.all_cells()` and checks they are exactly
 the cell_ids present in `results/cells.parquet` — no missing, no extras. Because
-cell_id is a hash of the spec, this proves the shipped predictions correspond to
+cell_id is a hash of the spec, this proves the generated predictions correspond to
 the catalog's declared experiments and nothing has drifted.
 
 Exit 0 = match. Exit 1 = mismatch (prints what differs).
 
-Usage:  python scripts/verify_catalog.py
+Usage:  python scripts/verify_catalog.py [--results results]
 """
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -22,8 +23,11 @@ from parkinson_spiral.catalog import EXPECTED_N_CELLS, all_cells  # noqa: E402
 
 
 def main() -> int:
-    repo = Path(__file__).resolve().parents[1]
-    cells_path = repo / "results" / "cells.parquet"
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--results", type=Path, default=Path(__file__).resolve().parents[1] / "results")
+    args = ap.parse_args()
+
+    cells_path = args.results / "cells.parquet"
     if not cells_path.is_file():
         print(f"ERROR: {cells_path} not found", file=sys.stderr)
         return 1

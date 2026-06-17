@@ -1,7 +1,7 @@
 """The 97 experiment cells behind the paper, in the paper's naming.
 
 This is the declarative source of truth for what was run. `scripts/verify_catalog.py`
-checks that the cell_ids enumerated here exactly match the cell_ids in the shipped
+checks that the cell_ids enumerated here exactly match the cell_ids in a local
 `results/cells.parquet` (no missing, no extras), and `scripts/reproduce.py` re-runs
 these specs to regenerate the predictions from scratch.
 

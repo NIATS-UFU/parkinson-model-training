@@ -1,12 +1,12 @@
-"""Regenerate the paper's four tables + two TikZ figures from the shipped results.
+"""Regenerate the paper's four tables + two TikZ figures from local results.
 
 No training, no GPU — reads only `results/` and writes:
   <out>/results_tables.md                          (b1-fidelity, cv-ceiling, cross-dataset, h4-cost)
   <out>/figures/tikz/fig1_crossdataset_matrices.tex
   <out>/figures/tikz/fig2_asymmetry.tex
 
-The numbers it prints are the numbers in conference_v2.tex. `scripts/regenerate.py`
-is a thin wrapper around this for the headline reproduce-from-results workflow.
+The numbers it prints are derived from local prediction parquet files.
+`scripts/regenerate.py` is a thin wrapper around this workflow.
 
 Usage:  python scripts/make_paper_tables_figures.py [--out paper_artifacts]
 """

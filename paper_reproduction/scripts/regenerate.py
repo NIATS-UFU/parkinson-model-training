@@ -1,8 +1,7 @@
-"""Layer 1 — regenerate the paper's tables and figures from the shipped results.
+"""Layer 1 — regenerate the paper's tables and figures from local results.
 
-This is the headline reproducibility claim: no datasets, no GPU, no training. It
-reads only `results/` (cells.parquet + predictions/) and rebuilds every table and
-figure in seconds. Run this first.
+This needs no datasets, no GPU, and no training once a local `results/` directory
+(cells.parquet + predictions/) exists.
 
 Usage:  python scripts/regenerate.py [--out paper_artifacts]
 """

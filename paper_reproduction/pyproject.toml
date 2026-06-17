@@ -11,8 +11,8 @@ requires-python = ">=3.10"
 license = { file = "LICENSE" }
 authors = [{ name = "NIATS-UFU" }]
 
-# Layer-1 baseline: regenerating the paper's tables/figures from the shipped
-# results only needs these. The deep-learning pipelines pull torch/tensorflow on
+# Layer-1 baseline: regenerating the paper's tables/figures from local results
+# only needs these. The deep-learning pipelines pull torch/tensorflow on
 # demand for Layer-2 re-training (see the [train] extra and docs/REPRODUCE.md).
 dependencies = [
     "numpy>=1.24",

@@ -1,8 +1,8 @@
-"""End-to-end check that the shipped results reproduce the paper's headline numbers.
+"""End-to-end check that local results reproduce the paper's headline numbers.
 
-This is the V0 gate: load results/ and confirm a few anchor values match the
-manuscript exactly (catalog == shipped, off-diagonal means, the DINOv2 Hemato
-ceiling). If these drift, the shipped predictions no longer back the paper.
+Load results/ when present and confirm a few anchor values match the manuscript
+exactly (catalog == results, off-diagonal means, the DINOv2 Hemato ceiling). If
+these drift, the generated predictions no longer back the paper.
 """
 
 from pathlib import Path
@@ -21,11 +21,11 @@ RESULTS = Path(__file__).resolve().parents[1] / "results"
 @pytest.fixture(scope="module")
 def results():
     if not (RESULTS / "cells.parquet").is_file():
-        pytest.skip("shipped results/ not present")
+        pytest.skip("local results/ not present")
     return load_results(RESULTS)
 
 
-def test_catalog_matches_shipped_results(results):
+def test_catalog_matches_local_results(results):
     cells, _ = results
     assert {c.cell_id for c in all_cells()} == set(cells["cell_id"])
 

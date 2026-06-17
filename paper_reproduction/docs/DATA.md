@@ -1,8 +1,8 @@
 # Datasets
 
-This repository ships **no images**. Layer-1 reproduction (tables and figures from
-the shipped predictions) needs none. Layer-2 re-training needs the datasets placed
-on disk in the layout below.
+This repository ships **no images** and no generated result parquet files. Layer-1
+reproduction needs a local result directory. Layer-2 re-training needs the
+datasets placed on disk in the layout below.
 
 The paper uses three spiral-drawing datasets:
 
