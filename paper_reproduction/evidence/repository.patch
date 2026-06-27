@@ -1,0 +1,1537 @@
+diff --git a/.gitignore b/.gitignore
+index 0f5d0c4..5251881 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -139,7 +139,11 @@ dmypy.json
+ .prof
+ 
+ # uv
+-uv.lock
++!uv.lock
++!paper_reproduction/uv.lock
++
++# macOS
++.DS_Store
+ 
+ # vscode
+ .vscode/
+diff --git a/Makefile b/Makefile
+index 22badc4..85676bf 100644
+--- a/Makefile
++++ b/Makefile
+@@ -49,11 +49,11 @@ uv-sync: check-install-uv $(VIRTUAL_ENV)
+ 	uv sync --all-groups
+ 	@echo "✅ Dependencies installed!"
+ 
+-## Remove virtual environment and lockfile
++## Remove the virtual environment while preserving the reproducibility lockfile
+ .PHONY: clean
+ clean:
+-	@echo "Cleaning lockfile and temporary files..."
+-	rm -rf .venv $(LOCKFILE)
++	@echo "Cleaning virtual environment and temporary files..."
++	rm -rf .venv
+ 	@echo "✅ Cleanup complete!"
+ 
+ ###########################
+@@ -75,21 +75,21 @@ test: install pytest paper-reproduction-test
+ .PHONY: pytest
+ pytest:
+ 	@echo "Running tests with coverage..."
+-	uv run --all-groups pytest --cov=$(REPO_NAME) --cov-config=pyproject.toml --cov-report=term-missing tests
++	uv run --all-groups python -m pytest --cov=$(REPO_NAME) --cov-config=pyproject.toml --cov-report=term-missing tests
+ 	@echo "✅ Tests completed!"
+ 
+ ## Run paper reproduction package tests in its own environment
+ .PHONY: paper-reproduction-test
+ paper-reproduction-test:
+ 	@echo "Running paper reproduction tests..."
+-	uv run --project paper_reproduction --with pytest pytest paper_reproduction/tests
++	uv run --project paper_reproduction --with pytest python -m pytest paper_reproduction/tests
+ 	@echo "✅ Paper reproduction tests completed!"
+ 
+ ## Run pytest with verbose output
+ .PHONY: pytest-loud
+ pytest-loud:
+ 	@echo "Running tests in verbose mode..."
+-	uv run --all-groups pytest -s --cov=$(REPO_NAME) --cov-report=term-missing tests
++	uv run --all-groups python -m pytest -s --cov=$(REPO_NAME) --cov-report=term-missing tests
+ 	@echo "✅ Verbose tests completed!"
+ 
+ ## Format code with ruff
+diff --git a/README.md b/README.md
+index 5265ef9..3b0cd2d 100644
+--- a/README.md
++++ b/README.md
+@@ -2,12 +2,11 @@
+ 
+ [![on-merge](https://github.com/NIATS-UFU/parkinson-model-train/actions/workflows/on_merge.yaml/badge.svg)](https://github.com/NIATS-UFU/parkinson-model-train/actions/workflows/on_merge.yaml)
+ [![ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+-![Python](https://img.shields.io/badge/python-3.12%2B-blue.svg)
++![Python](https://img.shields.io/badge/python-3.13-blue.svg)
+ 
+ Training repo for the NIATS Parkinson drawing baseline: 512x512 spiral/wave crops from [`spiral-cropper`](https://github.com/NIATS-UFU/spiral-cropper) go into a frozen DINO/DINOv2 encoder, then a supervised linear classifier is trained with subject-level splits.
+ 
+ - **Repository:** <https://github.com/NIATS-UFU/parkinson-model-train>
+-- **Local path:** `/data/git/ufu/parkinson_model_training`
+ - **CLI entry point:** `main-cli`
+ - **Main assumption:** split by subject, not by image, to avoid leakage.
+ 
+@@ -25,7 +24,11 @@ Training repo for the NIATS Parkinson drawing baseline: 512x512 spiral/wave crop
+ make install
+ ```
+ 
+-This installs the Python package and development dependencies with `uv`. The project currently uses PyTorch CUDA 12.6 wheels on Linux.
++This installs the Python package and development dependencies with `uv`. The
++project currently uses Python 3.13 and PyTorch CUDA 12.6 wheels on Linux.
++The committed `uv.lock` is the source of truth for the root environment; the
++paper reproduction package has its own committed lockfile and Python 3.13
++environment.
+ 
+ ## Manifest
+ 
+@@ -67,7 +70,8 @@ Useful options:
+ 
+ - `--model-name`: any compatible `timm` model; default is `vit_small_patch14_dinov2`
+ - `--image-size`: input resize size; default is `512`
+-- `--device`: `auto`, `cpu`, `cuda`, or a Torch device string
++- `--device`: `auto`, `cpu`, `cuda`, `mps`, or a Torch device string. On Apple
++  Silicon, `auto` selects Metal Performance Shaders (MPS) when available.
+ - `--learning-rate`: AdamW learning rate for the classifier head
+ - `--val-fraction`, `--test-fraction`, `--seed`: subject-level split controls
+ - `--num-workers`: PyTorch DataLoader worker count
+diff --git a/docker/Dockerfile b/docker/Dockerfile
+index 5a595ed..ae7eaab 100644
+--- a/docker/Dockerfile
++++ b/docker/Dockerfile
+@@ -1,4 +1,4 @@
+-ARG PYTHON_VERSION=3.12
++ARG PYTHON_VERSION=3.13
+ 
+ FROM python:${PYTHON_VERSION}-slim
+ 
+diff --git a/paper_reproduction/docs/DECISIONS.md b/paper_reproduction/docs/DECISIONS.md
+index 0f6b882..bb8344e 100644
+--- a/paper_reproduction/docs/DECISIONS.md
++++ b/paper_reproduction/docs/DECISIONS.md
+@@ -32,9 +32,19 @@ reproduction release for review.
+ 
+ ## Experiment Semantics
+ 
+-- The Dogan published-split fidelity cell propagates `augment_then_split=True` into
+-  the `AUG-Dogan` recipe so the dataset emits the intended eight deterministic
+-  rotation/flip variants per source image.
++- Cross-dataset cells with the same pipeline, recipe, seed, and training source
++  reuse one fitted source model for both foreign test datasets. This preserves
++  the intended matrix semantics: a matrix row is one trained source model
++  evaluated against multiple targets, not two independently randomized fits.
++- The Dogan paper reports augmentation before splitting, but does not publish the
++  random split or variant assignment needed to reproduce that leakage. The
++  released fidelity cell therefore uses the public released split and applies
++  augmentation only to training images. The paper's 99.39% is retained only as
++  an unverified, non-participant-disjoint upper bound.
++- All three Dogan backbones are frozen public feature extractors in the bounded
++  M4 reproduction. TensorFlow 2.21 exposes no Apple Metal device, so literal
++  NASNetMobile fine-tuning would leave one branch on CPU and make the claimed
++  three-backbone regime neither uniform nor submission-feasible.
+ - The catalog remains the source of truth for the 97 full-paper cells. Partial runs
+   are allowed only as local reruns when the manifest lacks restricted data.
+ 
+diff --git a/paper_reproduction/docs/REPRODUCE.md b/paper_reproduction/docs/REPRODUCE.md
+index b9396b5..f226de8 100644
+--- a/paper_reproduction/docs/REPRODUCE.md
++++ b/paper_reproduction/docs/REPRODUCE.md
+@@ -84,13 +84,19 @@ recomputes even cached cells.
+ |---|---|---|
+ | `dinov2_probe` | frozen public backbone → features → one logistic fit | **No** (CPU fine) |
+ | `folador_hog` | deterministic HOG features → SVM/RFC/KNN/CNN1D head | **No** |
+-| `dogan_triple` | 3 CNN backbones fine-tuned + NCA + linear SVM | **Yes** — except the Hemato CV folds, which are small enough for CPU |
++| `dogan_triple` | three frozen public backbones + NCA + linear SVM | **Mixed** — PyTorch extraction uses MPS/CUDA; TensorFlow NASNetMobile may remain on CPU |
+ | `huang_vgg19` | VGG19 end-to-end fine-tune, 50 epochs | **Yes** |
+ 
+ CPU-only reproduction (DINOv2 + Folador HOG + Dogan-on-Hemato) covers the paper's
+ central H2/H4 story; the GPU pipelines are needed for the literature in-domain
+ ceilings and the full 3×3 matrices of Huang/Dogan.
+ 
++On Apple Silicon, the PyTorch portions of DINOv2, Huang VGG19, and Dogan
++automatically use the Metal Performance Shaders (`mps`) backend. CUDA mixed
++precision remains disabled on MPS. Dogan's TensorFlow NASNetMobile branch uses
++whatever TensorFlow device support is installed and may remain on CPU unless a
++compatible TensorFlow Metal plugin is configured separately.
++
+ The notebook splits this for you: **Section 1** runs the CPU-only subset, and
+ **Section 2** runs the GPU pipelines behind a `torch.cuda.is_available()` guard.
+ 
+diff --git a/paper_reproduction/scripts/paper.py b/paper_reproduction/scripts/paper.py
+index 592d2d6..7ef96f6 100644
+--- a/paper_reproduction/scripts/paper.py
++++ b/paper_reproduction/scripts/paper.py
+@@ -8,7 +8,14 @@ Usage:
+ """
+ 
+ import argparse
++import hashlib
++import importlib.metadata
++import json
++import platform
++import shutil
++import subprocess
+ import sys
++from dataclasses import asdict
+ from pathlib import Path
+ 
+ import numpy as np
+@@ -43,7 +50,7 @@ PUBLISHED_LITERATURE = {
+ TRAINING_REGIME = {
+     "dinov2_probe": "frozen backbone; single-pass features + 1 logistic fit",
+     "folador_hog": "deterministic HOG + classifier fit (no epochs)",
+-    "dogan_triple": "3 backbones fine-tuned + NCA + linear SVM",
++    "dogan_triple": "3 frozen public backbones + NCA + linear SVM",
+     "huang_vgg19": "end-to-end fine-tune, 50 epochs",
+ }
+ GPU_PIPELINES = {"huang_vgg19", "dogan_triple"}
+@@ -454,6 +461,239 @@ def verify_catalog_command(args: argparse.Namespace) -> int:
+     return 1
+ 
+ 
++def _sha256(path: Path) -> str:
++    digest = hashlib.sha256()
++    with path.open("rb") as file:
++        for chunk in iter(lambda: file.read(1024 * 1024), b""):
++            digest.update(chunk)
++    return digest.hexdigest()
++
++
++def _display_path(path: Path, repo: Path) -> str:
++    try:
++        return str(path.resolve().relative_to(repo.resolve()))
++    except ValueError:
++        return str(path.resolve())
++
++
++def _git_value(repo: Path, *args: str) -> str | None:
++    completed = subprocess.run(
++        ["git", *args],
++        cwd=repo,
++        check=False,
++        capture_output=True,
++        text=True,
++    )
++    return completed.stdout.strip() if completed.returncode == 0 else None
++
++
++def _command_output(*args: str) -> str | None:
++    completed = subprocess.run(args, check=False, capture_output=True, text=True)
++    return completed.stdout.strip() if completed.returncode == 0 else None
++
++
++def _hardware_profile() -> dict[str, str]:
++    raw = _command_output("system_profiler", "SPHardwareDataType")
++    if raw is None:
++        return {}
++    allowed = {"Model Name", "Model Identifier", "Chip", "Total Number of Cores", "Memory"}
++    profile = {}
++    for line in raw.splitlines():
++        if ":" not in line:
++            continue
++        key, value = (part.strip() for part in line.split(":", 1))
++        if key in allowed:
++            profile[key] = value
++    return profile
++
++
++def freeze_evidence_command(args: argparse.Namespace) -> int:
++    """Freeze manifest, folds, catalog, environment, and artifact checksums."""
++    repo = Path(__file__).resolve().parents[2]
++    manifest = pd.read_parquet(args.manifest)
++    args.out.mkdir(parents=True, exist_ok=True)
++
++    subject_folds = (
++        manifest[["dataset", "subject_id", "class_label", "cv_fold"]]
++        .drop_duplicates()
++        .sort_values(["dataset", "subject_id"])
++    )
++    conflicting = subject_folds.groupby(["dataset", "subject_id"]).size()
++    if (conflicting > 1).any():
++        raise ValueError("manifest assigns conflicting labels or CV folds to at least one subject")
++    subject_folds.to_csv(args.out / "subject_folds.csv", index=False)
++    if args.historical_manifest.is_file():
++        historical = pd.read_parquet(args.historical_manifest)
++        historical["dataset"] = historical["dataset"].replace({"niats": "folador"})
++        historical["subject_id"] = (
++            historical["subject_id"]
++            .astype(str)
++            .str.replace(
++                "niats:",
++                "folador:",
++                regex=False,
++            )
++        )
++        historical_folds = (
++            historical[["dataset", "subject_id", "class_label", "cv_fold"]]
++            .drop_duplicates()
++            .sort_values(["dataset", "subject_id"])
++        )
++        historical_folds.to_csv(args.out / "historical_subject_folds.csv", index=False)
++        comparison = historical_folds.merge(
++            subject_folds,
++            on=["dataset", "subject_id", "class_label"],
++            suffixes=("_historical", "_current"),
++            validate="one_to_one",
++        )
++        comparison["changed"] = comparison["cv_fold_historical"] != comparison["cv_fold_current"]
++        fold_comparison = {
++            "historical_manifest": _display_path(args.historical_manifest, repo),
++            "historical_manifest_sha256": _sha256(args.historical_manifest),
++            "subjects_compared": len(comparison),
++            "subjects_changed": int(comparison["changed"].sum()),
++            "by_dataset": {
++                dataset: {
++                    "subjects": len(group),
++                    "subjects_changed": int(group["changed"].sum()),
++                }
++                for dataset, group in comparison.groupby("dataset")
++            },
++        }
++        (args.out / "fold_comparison.json").write_text(
++            json.dumps(fold_comparison, indent=2, sort_keys=True),
++            encoding="utf-8",
++        )
++
++    catalog = [{"cell_id": spec.cell_id, **asdict(spec)} for spec in all_cells()]
++    (args.out / "catalog.json").write_text(json.dumps(catalog, indent=2, sort_keys=True), encoding="utf-8")
++    model_configurations = {
++        name: {
++            "free_hyperparameters": get_pipeline_class(name).FREE_HYPERPARAMETERS,
++            "methods_notes": get_pipeline_class(name).METHODS_SECTION_NOTES,
++        }
++        for name in sorted({spec.pipeline_name for spec in all_cells()})
++    }
++    (args.out / "model_configurations.json").write_text(
++        json.dumps(model_configurations, indent=2, sort_keys=True),
++        encoding="utf-8",
++    )
++
++    packages = {}
++    for name in [
++        "numpy",
++        "pandas",
++        "pyarrow",
++        "scikit-learn",
++        "scikit-image",
++        "pillow",
++        "torch",
++        "torchvision",
++        "timm",
++        "tensorflow",
++    ]:
++        try:
++            packages[name] = importlib.metadata.version(name)
++        except importlib.metadata.PackageNotFoundError:
++            packages[name] = None
++
++    accelerator: dict[str, bool | str | None] = {"torch_available": packages["torch"] is not None}
++    if packages["torch"] is not None:
++        import torch
++
++        accelerator.update({
++            "cuda_available": torch.cuda.is_available(),
++            "mps_available": torch.backends.mps.is_available(),
++            "mps_built": torch.backends.mps.is_built(),
++        })
++
++    environment = {
++        "python": platform.python_version(),
++        "platform": platform.platform(),
++        "machine": platform.machine(),
++        "packages": packages,
++        "accelerator": accelerator,
++        "git_commit": _git_value(repo, "rev-parse", "HEAD"),
++        "git_branch": _git_value(repo, "branch", "--show-current"),
++        "git_status": _git_value(repo, "status", "--short"),
++        "manifest_rows": len(manifest),
++        "manifest_sha256": _sha256(args.manifest),
++        "catalog_cells": len(catalog),
++        "hardware_profile": _hardware_profile(),
++        "run_device_policy": {
++            "dinov2_probe": "PyTorch MPS",
++            "huang_vgg19": "PyTorch MPS, full precision",
++            "dogan_triple_torch": "PyTorch MPS",
++            "dogan_triple_nasnetmobile": "TensorFlow CPU",
++            "folador_hog": "CPU",
++        },
++        "tensorflow_devices": _command_output(
++            str(Path(sys.executable)),
++            "-c",
++            "import tensorflow as tf; print(tf.config.list_physical_devices())",
++        )
++        if packages["tensorflow"] is not None
++        else None,
++    }
++    (args.out / "environment.json").write_text(
++        json.dumps(environment, indent=2, sort_keys=True),
++        encoding="utf-8",
++    )
++    repository_patch = subprocess.run(
++        ["git", "diff", "--binary", "HEAD"],
++        cwd=repo,
++        check=False,
++        capture_output=True,
++        text=True,
++    ).stdout
++    (args.out / "repository.patch").write_text(repository_patch, encoding="utf-8")
++
++    if args.manuscript.is_file():
++        shutil.copy2(args.manuscript, args.out / args.manuscript.name)
++
++    checksum_paths = [args.manifest, repo / "uv.lock", repo / "paper_reproduction" / "uv.lock"]
++    checksum_paths.extend([
++        args.out / "catalog.json",
++        args.out / "model_configurations.json",
++        args.out / "subject_folds.csv",
++        args.out / "environment.json",
++        args.out / "repository.patch",
++    ])
++    if args.historical_manifest.is_file():
++        checksum_paths.extend([
++            args.historical_manifest,
++            args.out / "historical_subject_folds.csv",
++            args.out / "fold_comparison.json",
++        ])
++    if args.manuscript.is_file():
++        checksum_paths.append(args.out / args.manuscript.name)
++    if args.results.is_dir():
++        checksum_paths.extend(sorted(path for path in args.results.rglob("*") if path.is_file()))
++    unique_checksum_paths = dict.fromkeys(path.resolve() for path in checksum_paths if path.is_file())
++    checksum_lines = [
++        f"{_sha256(path)}  {_display_path(path, repo)}"
++        for path in unique_checksum_paths
++        if path != (args.out / "checksums.sha256").resolve()
++    ]
++    (args.out / "checksums.sha256").write_text("\n".join(checksum_lines) + "\n", encoding="utf-8")
++
++    readme = (
++        "# Frozen reproduction evidence\n\n"
++        "Generated by `scripts/paper.py freeze-evidence`.\n\n"
++        "- `environment.json`: runtime, package, accelerator, git, and manifest provenance.\n"
++        "- `subject_folds.csv`: immutable subject label and CV-fold assignment.\n"
++        "- `historical_subject_folds.csv` and `fold_comparison.json`: prior manuscript fold map and drift audit, when supplied.\n"
++        "- `catalog.json`: canonical 97-cell experiment specification.\n"
++        "- `model_configurations.json`: declared hyperparameters and methods notes.\n"
++        "- `repository.patch`: exact uncommitted code state relative to the recorded commit.\n"
++        "- manuscript PDF: frozen submitted manuscript snapshot when supplied.\n"
++        "- `checksums.sha256`: hashes for lockfiles, manifest, and generated result artifacts.\n"
++    )
++    (args.out / "README.md").write_text(readme, encoding="utf-8")
++    print(f"wrote frozen evidence -> {args.out}")
++    return 0
++
++
+ def _build_parser() -> argparse.ArgumentParser:
+     repo = Path(__file__).resolve().parents[1]
+     parser = argparse.ArgumentParser(description=__doc__)
+@@ -481,6 +721,14 @@ def _build_parser() -> argparse.ArgumentParser:
+     verify.add_argument("--results", type=Path, default=repo / "results")
+     verify.set_defaults(func=verify_catalog_command)
+ 
++    freeze = sub.add_parser("freeze-evidence", help="freeze manifest, folds, environment, and artifact checksums")
++    freeze.add_argument("--manifest", type=Path, default=repo / "results" / "manifest.parquet")
++    freeze.add_argument("--results", type=Path, default=repo / "results")
++    freeze.add_argument("--out", type=Path, default=repo / "evidence")
++    freeze.add_argument("--manuscript", type=Path, default=Path(""))
++    freeze.add_argument("--historical-manifest", type=Path, default=Path(""))
++    freeze.set_defaults(func=freeze_evidence_command)
++
+     return parser
+ 
+ 
+diff --git a/paper_reproduction/src/parkinson_spiral/catalog.py b/paper_reproduction/src/parkinson_spiral/catalog.py
+index 0699160..a795b5e 100644
+--- a/paper_reproduction/src/parkinson_spiral/catalog.py
++++ b/paper_reproduction/src/parkinson_spiral/catalog.py
+@@ -19,6 +19,10 @@ N_FOLDS = 5
+ 
+ # Folador HOG reports its SVM_linear head in the paper.
+ _FOLADOR_KW = {"classifier": "SVM_linear"}
++# The bounded M4 reproduction uses all three public backbones as frozen feature
++# extractors. Literal three-backbone fine-tuning is not feasible because the
++# TensorFlow runtime exposes no Apple Metal device.
++_DOGAN_KW = {"fine_tune": False}
+ 
+ 
+ def _cv(pipeline: str, recipe: str, source: str, pipeline_kwargs: dict | None = None) -> list[CellSpec]:
+@@ -97,7 +101,7 @@ def group_a() -> list[CellSpec]:
+     for source in SOURCES:
+         cells += _cv("huang_vgg19", "AUG-Huang", source)
+     for source in SOURCES:
+-        cells += _cv("dogan_triple", "AUG-Dogan", source)
++        cells += _cv("dogan_triple", "AUG-Dogan", source, _DOGAN_KW)
+     for source in SOURCES:
+         cells += _cv("folador_hog", "AUG-None", source, _FOLADOR_KW)
+     return cells
+@@ -108,7 +112,7 @@ def group_b() -> list[CellSpec]:
+     return (
+         _cross("dinov2_probe", "AUG-None")
+         + _cross("huang_vgg19", "AUG-Huang")
+-        + _cross("dogan_triple", "AUG-Dogan")
++        + _cross("dogan_triple", "AUG-Dogan", _DOGAN_KW)
+         + _cross("folador_hog", "AUG-None", _FOLADOR_KW)
+     )
+ 
+@@ -118,8 +122,17 @@ def group_c() -> list[CellSpec]:
+     return [
+         # Huang VGG19 on Kaggle's released split.
+         _published("huang_vgg19", "AUG-Huang", "kaggle", augment_then_split=False),
+-        # Dogan triple on Kaggle's released split, augment-before-split (literature's leaky order).
+-        _published("dogan_triple", "AUG-Dogan", "kaggle", augment_then_split=True),
++        # Dogan triple on Kaggle's released split. The source paper reports augmentation
++        # before splitting, but does not publish enough split detail to reproduce that
++        # leakage exactly; this release therefore keeps the auditable released split and
++        # applies augmentation only to its training partition.
++        _published(
++            "dogan_triple",
++            "AUG-Dogan",
++            "kaggle",
++            augment_then_split=False,
++            pipeline_kwargs=_DOGAN_KW,
++        ),
+         # Folador HOG+SVM on the Folador dataset's released split.
+         _published("folador_hog", "AUG-None", "folador", augment_then_split=False, pipeline_kwargs=_FOLADOR_KW),
+     ]
+diff --git a/paper_reproduction/src/parkinson_spiral/data/__init__.py b/paper_reproduction/src/parkinson_spiral/data/__init__.py
+index d3b177e..18a96ed 100644
+--- a/paper_reproduction/src/parkinson_spiral/data/__init__.py
++++ b/paper_reproduction/src/parkinson_spiral/data/__init__.py
+@@ -1,6 +1,5 @@
+-"""Data layer: unified manifest builders, the torch Dataset, and subject-level splits."""
++"""Data layer: unified manifest builders and subject-level splits."""
+ 
+-from .dataset import CLASS_LABEL_TO_INT, PreprocessedSpiralDataset
+ from .splits import (
+     CV_DATASETS,
+     assign_subject_folds,
+@@ -24,8 +23,6 @@ __all__ = [
+     "build_unified_manifest",
+     "enforce_schema",
+     "make_image_id",
+-    "PreprocessedSpiralDataset",
+-    "CLASS_LABEL_TO_INT",
+     "assign_subject_folds",
+     "produce_subject_clean_resplit",
+     "published_train_mask",
+diff --git a/paper_reproduction/src/parkinson_spiral/data/hemato.py b/paper_reproduction/src/parkinson_spiral/data/hemato.py
+index 2c48dd4..c4d9af7 100644
+--- a/paper_reproduction/src/parkinson_spiral/data/hemato.py
++++ b/paper_reproduction/src/parkinson_spiral/data/hemato.py
+@@ -74,6 +74,8 @@ def build_hemato_manifest(data_root: Path) -> pd.DataFrame:
+             abs_path = reconstructed.resolve()
+         else:
+             abs_path = (output_root / recorded).resolve()
++        if not abs_path.is_file():
++            continue
+         manifest_rel = abs_path.relative_to(data_root.resolve()).as_posix()
+         rows.append({
+             "image_id": make_image_id("hemato", manifest_rel),
+diff --git a/paper_reproduction/src/parkinson_spiral/data/kaggle.py b/paper_reproduction/src/parkinson_spiral/data/kaggle.py
+index ff3dfbc..5e4c006 100644
+--- a/paper_reproduction/src/parkinson_spiral/data/kaggle.py
++++ b/paper_reproduction/src/parkinson_spiral/data/kaggle.py
+@@ -5,7 +5,8 @@ Expected layout (place the public dataset under <data_root>/kaggle/):
+     <data_root>/kaggle/{spiral,wave}/{training,testing}/{healthy,parkinson}/*.png
+ 
+ Subject ID convention:
+-    Filename pattern `V<NN><P|H>E<NN>.png`. The same V-number appears in BOTH
++    Filename pattern `V<NN><P|H><E|O><NN>.png`, where E denotes spiral
++    (espiral) and O denotes wave (onda). The same V-number appears in BOTH
+     healthy/ and parkinson/ folders but refers to different individuals
+     (class-local indexing). To make subject-level grouping safe, we fold the
+     class letter into subject_id: `kaggle:V01H` vs `kaggle:V01P`.
+@@ -18,8 +19,10 @@ import pandas as pd
+ 
+ from .unified import MANIFEST_COLUMNS, make_image_id
+ 
+-# V<NN>[P|H]E<NN>.png — class letter is the discriminator
+-_FNAME_RE = re.compile(r"^(V\d+)([PH])E\d+\.png$", re.IGNORECASE)
++# V<NN>[P|H][E|O]<NN>.png — class letter identifies the participant and the
++# E/O letter identifies the drawing task. Both modalities must map to the same
++# participant before subject-grouped folds are assigned.
++_FNAME_RE = re.compile(r"^(V\d+)([PH])[EO]\d+\.(?:png|jpe?g)$", re.IGNORECASE)
+ 
+ 
+ def _subject_id(stem_with_ext: str, class_label: str) -> str:
+@@ -35,6 +38,8 @@ def build_kaggle_manifest(data_root: Path) -> pd.DataFrame:
+     data_root = Path(data_root)
+     rows: list[dict] = []
+     kaggle_root = data_root / "kaggle"
++    if not (kaggle_root / "spiral").is_dir() and (kaggle_root / "drawings").is_dir():
++        kaggle_root /= "drawings"
+     for drawing_type in ("spiral", "wave"):
+         for split_folder, split_label in (("training", "train"), ("testing", "test")):
+             for label_folder, label in (("healthy", "healthy"), ("parkinson", "parkinson")):
+diff --git a/paper_reproduction/src/parkinson_spiral/data/splits.py b/paper_reproduction/src/parkinson_spiral/data/splits.py
+index 9450b92..76893f9 100644
+--- a/paper_reproduction/src/parkinson_spiral/data/splits.py
++++ b/paper_reproduction/src/parkinson_spiral/data/splits.py
+@@ -1,18 +1,17 @@
+-"""Subject-level splits: GroupKFold for the within-dataset diagonal, published
++"""Subject-level splits for the within-dataset diagonal, published
+ passthrough, and a subject-clean re-split helper.
+ 
+ Decisions:
+ - n_splits = 5.
+ - random_state = 20260516 (DEFAULT_SEED).
+-- StratifiedGroupKFold (sklearn >=1.1) for class balance across folds; falls back
+-  to GroupKFold with a warning if unavailable.
++- StratifiedKFold over a one-row-per-subject table. Splitting image rows with
++  StratifiedGroupKFold would let participants with many repeated images dominate
++  fold construction, which is inconsistent with subject-level evaluation.
+ - Folds are assigned PER DATASET (each dataset folded over its own subjects), so
+   the in-domain ceiling is a within-dataset CV mean for every dataset — not a
+   single high-variance subject-clean draw.
+ """
+ 
+-import warnings
+-
+ import pandas as pd
+ 
+ from .. import DEFAULT_SEED
+@@ -33,30 +32,22 @@ def _assign_one_dataset(out: pd.DataFrame, dataset: str, n_splits: int, random_s
+     mask = out["dataset"] == dataset
+     if not mask.any():
+         return
+-    sub = out.loc[mask].reset_index()  # keeps original index in 'index'
+-    groups = sub["subject_id"].to_numpy()
+-    y = (sub["class_label"] == "parkinson").astype(int).to_numpy()
+-
+-    try:
+-        from sklearn.model_selection import StratifiedGroupKFold
+-
+-        splitter = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+-        splits = list(splitter.split(sub, y=y, groups=groups))
+-    except (ImportError, TypeError):
+-        warnings.warn(
+-            "StratifiedGroupKFold unavailable; falling back to GroupKFold (no class stratification)",
+-            stacklevel=2,
+-        )
+-        from sklearn.model_selection import GroupKFold
+-
+-        splitter = GroupKFold(n_splits=n_splits)
+-        splits = list(splitter.split(sub, y=y, groups=groups))
+-
+-    fold_col = pd.Series(pd.NA, index=sub.index, dtype="Int64")
+-    for fold_idx, (_train_idx, val_idx) in enumerate(splits):
+-        fold_col.iloc[val_idx] = fold_idx
+-
+-    out.loc[mask, "cv_fold"] = fold_col.set_axis(sub["index"]).reindex(out.index[mask]).values
++    rows = out.loc[mask, ["subject_id", "class_label"]].drop_duplicates()
++    conflicting = rows.groupby("subject_id")["class_label"].nunique()
++    if (conflicting > 1).any():
++        raise ValueError(f"{dataset} has subjects with conflicting class labels")
++    subjects = rows.drop_duplicates("subject_id").reset_index(drop=True)
++    y = (subjects["class_label"] == "parkinson").astype(int).to_numpy()
++
++    from sklearn.model_selection import StratifiedKFold
++
++    splitter = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
++    subject_to_fold: dict[str, int] = {}
++    for fold_idx, (_train_idx, val_idx) in enumerate(splitter.split(subjects, y=y)):
++        for subject_id in subjects.iloc[val_idx]["subject_id"]:
++            subject_to_fold[str(subject_id)] = fold_idx
++
++    out.loc[mask, "cv_fold"] = out.loc[mask, "subject_id"].astype(str).map(subject_to_fold).astype("Int64").to_numpy()
+ 
+ 
+ def assign_subject_folds(
+diff --git a/paper_reproduction/src/parkinson_spiral/data/unified.py b/paper_reproduction/src/parkinson_spiral/data/unified.py
+index 9930948..5a392fb 100644
+--- a/paper_reproduction/src/parkinson_spiral/data/unified.py
++++ b/paper_reproduction/src/parkinson_spiral/data/unified.py
+@@ -74,6 +74,30 @@ def enforce_schema(df: pd.DataFrame) -> pd.DataFrame:
+     return df
+ 
+ 
++def deduplicate_exact_images(df: pd.DataFrame) -> pd.DataFrame:
++    """Drop byte-identical repeated files after validating their metadata.
++
++    Exact copies add no independent information and otherwise overweight subjects
++    with duplicated session folders. Copies with conflicting identity or labels
++    are rejected instead of silently merged.
++    """
++    hashes = []
++    for file_path in df["file_path"].astype(str):
++        digest = hashlib.sha256()
++        with Path(file_path).open("rb") as file:
++            for chunk in iter(lambda: file.read(1024 * 1024), b""):
++                digest.update(chunk)
++        hashes.append(digest.hexdigest())
++
++    out = df.assign(_content_sha256=hashes)
++    identity_columns = ["dataset", "subject_id", "drawing_type", "class_label"]
++    conflicting = out.groupby("_content_sha256")[identity_columns].nunique()
++    if (conflicting > 1).any(axis=None):
++        bad_hashes = conflicting[(conflicting > 1).any(axis=1)].index.tolist()
++        raise ValueError(f"byte-identical images have conflicting metadata: {bad_hashes[:3]}")
++    return out.drop_duplicates("_content_sha256", keep="first").drop(columns="_content_sha256").reset_index(drop=True)
++
++
+ def build_unified_manifest(data_root: Path) -> pd.DataFrame:
+     """Concatenate per-dataset manifests; downstream callers add cv_fold."""
+     from .folador import build_folador_manifest
+@@ -85,5 +109,5 @@ def build_unified_manifest(data_root: Path) -> pd.DataFrame:
+         build_folador_manifest(data_root),
+         build_hemato_manifest(data_root),
+     ]
+-    df = pd.concat(parts, ignore_index=True)
++    df = deduplicate_exact_images(pd.concat(parts, ignore_index=True))
+     return enforce_schema(df)
+diff --git a/paper_reproduction/src/parkinson_spiral/pipelines/__init__.py b/paper_reproduction/src/parkinson_spiral/pipelines/__init__.py
+index 9dd298f..a8f7be9 100644
+--- a/paper_reproduction/src/parkinson_spiral/pipelines/__init__.py
++++ b/paper_reproduction/src/parkinson_spiral/pipelines/__init__.py
+@@ -6,14 +6,29 @@ import sys
+ from ..protocol import Pipeline
+ 
+ 
++def accelerator_device() -> str:
++    """Return the best available PyTorch accelerator, including Apple MPS."""
++    import torch
++
++    if torch.cuda.is_available():
++        return "cuda"
++    if torch.backends.mps.is_available():
++        return "mps"
++    return "cpu"
++
++
+ def loader_kwargs() -> dict:
+     """DataLoader worker settings that are safe on the host OS.
+ 
+-    Windows (and Python 3.14+ POSIX) start workers with `spawn`, which pickles the
+-    dataset and recipe transforms — fragile and prone to worker-pool hangs — so we
+-    load single-process there. Linux uses `fork`, where workers are cheap and the
+-    GPU pipelines benefit, so we keep 2."""
+-    if os.name == "nt" or sys.version_info >= (3, 14):
++    Windows, macOS, and Python 3.14+ POSIX all use `spawn` for worker processes,
++    which requires pickling the dataset and transforms. With spawn, persistent
++    worker processes can deadlock against framework initialisation (e.g. TF CPU
++    thread pools competing with PyTorch MPS on macOS). Linux `fork` avoids all of
++    this, so we keep 2 workers only there."""
++    import platform
++
++    use_spawn = os.name == "nt" or platform.system() == "Darwin" or sys.version_info >= (3, 14)
++    if use_spawn:
+         return {"num_workers": 0}
+     return {"num_workers": 2, "persistent_workers": True}
+ 
+diff --git a/paper_reproduction/src/parkinson_spiral/pipelines/dinov2_probe.py b/paper_reproduction/src/parkinson_spiral/pipelines/dinov2_probe.py
+index ce86244..9e30dce 100644
+--- a/paper_reproduction/src/parkinson_spiral/pipelines/dinov2_probe.py
++++ b/paper_reproduction/src/parkinson_spiral/pipelines/dinov2_probe.py
+@@ -6,6 +6,8 @@ CPU-only (the frozen backbone is a public download; only the linear probe is fit
+ by us). Falls back to `vit_size="vits14"` if vitb14 OOMs.
+ """
+ 
++import os
++from pathlib import Path
+ from typing import ClassVar
+ 
+ import numpy as np
+@@ -31,6 +33,8 @@ class DinoV2Probe(Pipeline):
+         "memory, the harness falls back to vits14 (22M params, 384-d CLS token) and the "
+         "size-vs-accuracy trade-off is reported."
+     )
++    _BACKBONE_CACHE: ClassVar[dict[tuple[str, str], object]] = {}
++    _FEATURE_CACHE: ClassVar[dict[tuple[str, str], np.ndarray]] = {}
+ 
+     def __init__(
+         self,
+@@ -51,12 +55,43 @@ class DinoV2Probe(Pipeline):
+             return
+         import torch
+ 
+-        backbone = torch.hub.load(_DINOV2_HUB_REPO, f"dinov2_{self.vit_size}")
+-        backbone.eval()
+-        for p in backbone.parameters():
+-            p.requires_grad = False
+-        self._device = "cuda" if torch.cuda.is_available() else "cpu"
+-        self._backbone = backbone.to(self._device)
++        from . import accelerator_device
++
++        self._device = accelerator_device()
++        cache_key = (self.vit_size, self._device)
++        backbone = self._BACKBONE_CACHE.get(cache_key)
++        if backbone is None:
++            local_repo = os.environ.get("DINOV2_REPO_DIR")
++            local_weights = os.environ.get("DINOV2_WEIGHTS")
++            if bool(local_repo) != bool(local_weights):
++                raise ValueError("DINOV2_REPO_DIR and DINOV2_WEIGHTS must be set together")
++            if local_repo and local_weights:
++                repo_path = Path(local_repo)
++                weights_path = Path(local_weights)
++                if not repo_path.is_dir():
++                    raise FileNotFoundError(f"DINOv2 source directory not found: {repo_path}")
++                if not weights_path.is_file():
++                    raise FileNotFoundError(f"DINOv2 weights not found: {weights_path}")
++                backbone = torch.hub.load(
++                    str(repo_path),
++                    f"dinov2_{self.vit_size}",
++                    source="local",
++                    weights=str(weights_path),
++                )
++            else:
++                backbone = torch.hub.load(_DINOV2_HUB_REPO, f"dinov2_{self.vit_size}")
++            backbone.eval()
++            for p in backbone.parameters():
++                p.requires_grad = False
++            backbone = backbone.to(self._device)
++            self._BACKBONE_CACHE[cache_key] = backbone
++        self._backbone = backbone
++
++    @staticmethod
++    def _can_cache_features(dataset) -> bool:
++        """Return whether the dataset transform is deterministic per image."""
++        recipe_name = getattr(getattr(dataset, "recipe", None), "meta", None)
++        return getattr(recipe_name, "name", None) == "AUG-None" and not getattr(dataset, "augment_then_split", False)
+ 
+     def _extract(self, dataset) -> tuple[np.ndarray, np.ndarray]:
+         import torch
+@@ -74,11 +109,30 @@ class DinoV2Probe(Pipeline):
+         )
+         feats: list[np.ndarray] = []
+         labels: list[np.ndarray] = []
++        use_cache = self._can_cache_features(dataset)
+         with torch.inference_mode():
+-            for tensors, label_ints, _image_ids in loader:
+-                tensors = tensors.to(self._device, non_blocking=True)
+-                cls = self._backbone(tensors)  # (B, D)
+-                feats.append(cls.detach().cpu().numpy())
++            for tensors, label_ints, image_ids in loader:
++                batch_features: list[np.ndarray | None] = [None] * len(image_ids)
++                missing_indices: list[int] = []
++                if use_cache:
++                    for index, image_id in enumerate(image_ids):
++                        cached = self._FEATURE_CACHE.get((self.vit_size, str(image_id)))
++                        if cached is None:
++                            missing_indices.append(index)
++                        else:
++                            batch_features[index] = cached
++                else:
++                    missing_indices = list(range(len(image_ids)))
++
++                if missing_indices:
++                    missing_tensors = tensors[missing_indices].to(self._device, non_blocking=True)
++                    missing_features = self._backbone(missing_tensors).detach().cpu().numpy()
++                    for index, feature in zip(missing_indices, missing_features, strict=True):
++                        batch_features[index] = feature
++                        if use_cache:
++                            self._FEATURE_CACHE[(self.vit_size, str(image_ids[index]))] = feature
++
++                feats.append(np.stack(batch_features, axis=0))
+                 labels.append(np.asarray(label_ints))
+         return np.concatenate(feats, axis=0), np.concatenate(labels, axis=0)
+ 
+diff --git a/paper_reproduction/src/parkinson_spiral/pipelines/dogan_triple.py b/paper_reproduction/src/parkinson_spiral/pipelines/dogan_triple.py
+index 7f9db83..84d6e2d 100644
+--- a/paper_reproduction/src/parkinson_spiral/pipelines/dogan_triple.py
++++ b/paper_reproduction/src/parkinson_spiral/pipelines/dogan_triple.py
+@@ -6,10 +6,11 @@ tf.keras.applications (the only place it ships) and its 1056-d GAP features are
+ concatenated in numpy.
+ 
+ Two fine-tune modes:
+-- fine_tune=True (faithful): Adam(default lr=1e-3), 20 epochs per backbone, batch=32.
+-  Fine-tunes only the PyTorch backbones; Keras NASNetMobile stays frozen (recorded
+-  in METHODS_SECTION_NOTES).
+-- fine_tune=False: all three backbones frozen, ImageNet weights only.
++- fine_tune=False (paper catalog): all three public ImageNet backbones are frozen.
++  This bounded M4 reproduction is explicit because TensorFlow 2.21 exposes no
++  Apple Metal device for literal NASNetMobile fine-tuning.
++- fine_tune=True (optional): Adam(default lr=1e-3), 20 epochs per PyTorch
++  backbone, batch=32; NASNetMobile still remains frozen.
+ """
+ 
+ from typing import ClassVar
+@@ -19,6 +20,7 @@ from sklearn.neighbors import NeighborhoodComponentsAnalysis
+ from sklearn.svm import SVC
+ 
+ from ..protocol import Pipeline
++from .folador_hog import _stable_sigmoid
+ 
+ FINE_TUNE_EPOCHS = 20
+ FINE_TUNE_LR = 1e-3  # Dogan didn't state - Adam default
+@@ -46,15 +48,21 @@ class DoganTriple(Pipeline):
+         "Dogan et al. (2024) hybrid pipeline reproduced faithfully across two ML frameworks. "
+         "Three ImageNet-pretrained CNNs - DenseNet201 (torchvision), Xception (timm) and "
+         "NASNetMobile (tf.keras.applications) - are used as feature extractors after global "
+-        "average pooling. We support two modes: faithful fine-tuning (Adam, 20 epochs, "
+-        "batch=32, default lr=1e-3) of the PyTorch backbones (Keras NASNetMobile stays "
+-        "frozen), and a frozen-features fallback for compute-constrained settings. The three "
++        "average pooling. The paper catalog uses all three as frozen public feature "
++        "extractors because TensorFlow 2.21 exposes no Apple Metal device for literal "
++        "NASNetMobile fine-tuning. Optional fine-tuning is available for DenseNet201 and "
++        "Xception only, so either mode is a bounded reproduction rather than literal "
++        "three-backbone fine-tuning. The three "
+         "GAP feature vectors (1920 + 2048 + 1056 = 5024-d) are concatenated, passed through "
+         "NeighborhoodComponentsAnalysis retaining 17% of the dimensionality (Dogan section 5), "
+         "and classified with a linear SVM (Dogan did not specify the kernel; we use linear "
+-        "because of the high-dimensional concatenated features). When augment_then_split=True, "
+-        "the dataset emits 8 deterministic rotation/flip copies per source image."
++        "because of the high-dimensional concatenated features). Augmentation is applied "
++        "after the released or grouped split; the source paper's augmentation-before-split "
++        "result is treated as an unverified upper bound because its split is not published."
+     )
++    _BACKBONE_CACHE: ClassVar[dict[str, tuple[list, object, object]]] = {}
++    _FEATURE_CACHE: ClassVar[dict[tuple, tuple[np.ndarray, np.ndarray]]] = {}
++    _FIT_CACHE: ClassVar[dict[tuple, tuple[NeighborhoodComponentsAnalysis, SVC]]] = {}
+ 
+     def __init__(
+         self,
+@@ -80,19 +88,27 @@ class DoganTriple(Pipeline):
+         self._svm: SVC | None = None
+         self._device = None
+         self._use_amp = False
++        self._seed = 0
+ 
+     def _build_backbones(self):
+         import timm
+         import torch
+         from torchvision.models import DenseNet201_Weights, densenet201
+ 
++        from . import accelerator_device
++
++        self._device = accelerator_device()
++        self._use_amp = self._device == "cuda"
++        if not self.fine_tune and self._device in self._BACKBONE_CACHE:
++            cached_torch, cached_nasnet, cached_preprocess = self._BACKBONE_CACHE[self._device]
++            self._torch_backbones = cached_torch
++            self._keras_nasnet = cached_nasnet
++            self._keras_preprocess = cached_preprocess
++            return
++
+         dn = densenet201(weights=DenseNet201_Weights.IMAGENET1K_V1)
+         dn.classifier = torch.nn.Identity()  # gives GAP'd features
+-
+         xc = timm.create_model("xception", pretrained=True, num_classes=0, global_pool="avg")
+-
+-        self._device = "cuda" if torch.cuda.is_available() else "cpu"
+-        self._use_amp = self._device == "cuda"
+         self._torch_backbones = [m.eval().to(self._device) for m in (dn, xc)]
+         if not self.fine_tune:
+             for m in self._torch_backbones:
+@@ -110,6 +126,12 @@ class DoganTriple(Pipeline):
+         )
+         self._keras_nasnet.trainable = False  # frozen; see METHODS_SECTION_NOTES
+         self._keras_preprocess = preprocess_input
++        if not self.fine_tune:
++            self._BACKBONE_CACHE[self._device] = (
++                self._torch_backbones,
++                self._keras_nasnet,
++                self._keras_preprocess,
++            )
+ 
+     def _fine_tune_torch_backbones(self, dataset, seed: int):
+         import torch
+@@ -117,7 +139,7 @@ class DoganTriple(Pipeline):
+         from tqdm.auto import tqdm
+ 
+         loss_fn = torch.nn.CrossEntropyLoss()
+-        scaler = torch.cuda.amp.GradScaler(enabled=self._use_amp)
++        scaler = torch.amp.GradScaler("cuda", enabled=self._use_amp)
+ 
+         for backbone in self._torch_backbones:
+             head = torch.nn.Linear(self._feature_dim(backbone), 2).to(self._device)
+@@ -138,7 +160,7 @@ class DoganTriple(Pipeline):
+                     tensors = tensors.to(self._device, non_blocking=True)
+                     labels = labels.to(self._device, non_blocking=True).long()
+                     optim.zero_grad(set_to_none=True)
+-                    with torch.cuda.amp.autocast(enabled=self._use_amp):
++                    with torch.amp.autocast("cuda", enabled=self._use_amp):
+                         logits = wrapped(tensors)
+                         loss = loss_fn(logits, labels)
+                     scaler.scale(loss).backward()
+@@ -154,12 +176,28 @@ class DoganTriple(Pipeline):
+             x = torch.zeros(1, 3, INPUT_SIZE, INPUT_SIZE, device=next(backbone.parameters()).device)
+             return backbone(x).shape[-1]
+ 
++    def _dataset_cache_key(self, dataset) -> tuple:
++        image_ids = tuple(dataset.manifest["image_id"].astype(str))
++        recipe_name = dataset.recipe.meta.name
++        return (
++            self._device,
++            recipe_name,
++            bool(dataset.is_train),
++            bool(dataset.augment_then_split),
++            self._seed,
++            image_ids,
++        )
++
+     def _extract(self, dataset) -> tuple[np.ndarray, np.ndarray]:
+         import torch
+         from torch.utils.data import DataLoader
+ 
+         from . import loader_kwargs
+ 
++        cache_key = self._dataset_cache_key(dataset)
++        if not self.fine_tune and cache_key in self._FEATURE_CACHE:
++            return self._FEATURE_CACHE[cache_key]
++
+         loader = DataLoader(
+             dataset,
+             batch_size=self.batch_size,
+@@ -182,7 +220,10 @@ class DoganTriple(Pipeline):
+                 concat = np.concatenate([*torch_feats, nas_feats], axis=1)
+                 all_feats.append(concat)
+                 all_labels.append(np.asarray(labels))
+-        return np.concatenate(all_feats, axis=0), np.concatenate(all_labels, axis=0)
++        result = np.concatenate(all_feats, axis=0), np.concatenate(all_labels, axis=0)
++        if not self.fine_tune:
++            self._FEATURE_CACHE[cache_key] = result
++        return result
+ 
+     def _keras_extract(self, tensors) -> np.ndarray:
+         """Run Keras NASNetMobile on a torch batch and return (B, 1056) GAP features."""
+@@ -198,21 +239,40 @@ class DoganTriple(Pipeline):
+         arr = np.clip(arr * 255.0, 0, 255)  # to [0, 255]
+         arr = arr.transpose(0, 2, 3, 1)  # (B, H, W, C)
+         arr = self._keras_preprocess(arr)
+-        return self._keras_nasnet.predict(arr, verbose=0)
++        # Use direct model call instead of predict() to bypass TF's tf.data.Dataset
++        # prefetch pipeline, which deadlocks on macOS when TF and PyTorch MPS both
++        # hold system synchronization resources.
++        import tensorflow as tf
++
++        return self._keras_nasnet(tf.constant(arr), training=False).numpy()
+ 
+     def fit(self, dataset, *, seed: int) -> None:
++        self._seed = seed
+         self._build_backbones()
+         if self.fine_tune:
+             self._fine_tune_torch_backbones(dataset, seed)
++        fit_key = (
++            self._dataset_cache_key(dataset),
++            self.ncomponents_pct,
++            self.svm_kernel,
++            self.svm_C,
++        )
++        if not self.fine_tune and fit_key in self._FIT_CACHE:
++            self._nca, self._svm = self._FIT_CACHE[fit_key]
++            return
+         X, y = self._extract(dataset)
+         n_components = max(1, int(round(self.ncomponents_pct * X.shape[1])))
+         self._nca = NeighborhoodComponentsAnalysis(n_components=n_components, random_state=seed)
+         X_nca = self._nca.fit_transform(X, y)
+-        self._svm = SVC(kernel=self.svm_kernel, C=self.svm_C, probability=True, random_state=seed)
++        self._svm = SVC(kernel=self.svm_kernel, C=self.svm_C, random_state=seed)
+         self._svm.fit(X_nca, y)
++        if not self.fine_tune:
++            self._FIT_CACHE[fit_key] = (self._nca, self._svm)
+ 
+     def predict_proba(self, dataset) -> np.ndarray:
+         if self._svm is None or self._nca is None:
+             raise RuntimeError("predict_proba called before fit")
+         X, _ = self._extract(dataset)
+-        return self._svm.predict_proba(self._nca.transform(X))
++        margin = self._svm.decision_function(self._nca.transform(X))
++        p = _stable_sigmoid(margin)
++        return np.stack([1 - p, p], axis=1)
+diff --git a/paper_reproduction/src/parkinson_spiral/pipelines/folador_hog.py b/paper_reproduction/src/parkinson_spiral/pipelines/folador_hog.py
+index ee06498..c9a0fe2 100644
+--- a/paper_reproduction/src/parkinson_spiral/pipelines/folador_hog.py
++++ b/paper_reproduction/src/parkinson_spiral/pipelines/folador_hog.py
+@@ -107,7 +107,7 @@ class FoladorHOG(Pipeline):
+         elif self.classifier == "KNN":
+             self._model = KNeighborsClassifier(n_neighbors=7, p=1, weights="distance")
+         elif self.classifier == "SVM_linear":
+-            self._model = SVC(kernel="linear", probability=True, random_state=seed)
++            self._model = SVC(kernel="linear", random_state=seed)
+         else:
+             self._model = _build_cnn1d_keras(input_dim=X.shape[1], seed=seed)
+             self._model.fit(X[..., None], y, epochs=10, batch_size=24, verbose=0)
+@@ -121,9 +121,24 @@ class FoladorHOG(Pipeline):
+         if self.classifier == "CNN1D":
+             p = self._model.predict(X[..., None], verbose=0).reshape(-1)
+             return np.stack([1 - p, p], axis=1)
++        if self.classifier == "SVM_linear":
++            margin = self._model.decision_function(X)
++            p = _stable_sigmoid(margin)
++            return np.stack([1 - p, p], axis=1)
+         return self._model.predict_proba(X)
+ 
+ 
++def _stable_sigmoid(values: np.ndarray) -> np.ndarray:
++    """Map SVM margins to (0, 1) without an internal calibration split."""
++    values = np.asarray(values, dtype=np.float64)
++    out = np.empty_like(values)
++    positive = values >= 0
++    out[positive] = 1.0 / (1.0 + np.exp(-values[positive]))
++    exp_values = np.exp(values[~positive])
++    out[~positive] = exp_values / (1.0 + exp_values)
++    return out
++
++
+ def _build_cnn1d_keras(input_dim: int, seed: int):
+     """Folador 1D-CNN architecture, copied verbatim."""
+     import os
+diff --git a/paper_reproduction/src/parkinson_spiral/pipelines/huang_vgg19.py b/paper_reproduction/src/parkinson_spiral/pipelines/huang_vgg19.py
+index 8999b28..64b0134 100644
+--- a/paper_reproduction/src/parkinson_spiral/pipelines/huang_vgg19.py
++++ b/paper_reproduction/src/parkinson_spiral/pipelines/huang_vgg19.py
+@@ -45,6 +45,9 @@ class HuangVGG19(Pipeline):
+         "per channel (non-standard for ImageNet-pretrained VGG19, but kept faithful for "
+         "the reproduction)."
+     )
++    _LAST_FIT_KEY: ClassVar[tuple | None] = None
++    _LAST_MODEL: ClassVar[object | None] = None
++    _LAST_DEVICE: ClassVar[str | None] = None
+ 
+     def __init__(
+         self,
+@@ -78,21 +81,39 @@ class HuangVGG19(Pipeline):
+         from tqdm.auto import tqdm
+ 
+         torch.manual_seed(seed)
+-        self._device = "cuda" if torch.cuda.is_available() else "cpu"
+-        use_amp = self._device == "cuda"
++        from . import accelerator_device
++
++        self._device = accelerator_device()
++        fit_key = (
++            tuple(dataset.manifest["image_id"].astype(str)),
++            dataset.recipe.meta.name,
++            seed,
++            self.epochs,
++            self.lr,
++            self.batch_size,
++            self.freeze_features,
++            self._device,
++        )
++        if self._LAST_FIT_KEY == fit_key and self._LAST_MODEL is not None:
++            self._model = self._LAST_MODEL
++            self._device = self._LAST_DEVICE
++            return
++        # Enable autocast on CUDA and MPS; GradScaler only on CUDA (MPS doesn't need it).
++        use_amp = self._device in ("cuda", "mps")
++        use_scaler = self._device == "cuda"
+         self._model = self._build().to(self._device)
+ 
+         optim = torch.optim.Adam((p for p in self._model.parameters() if p.requires_grad), lr=self.lr)
+         sched = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim, T_0=T_0, T_mult=T_MULT, eta_min=ETA_MIN)
+         loss_fn = torch.nn.CrossEntropyLoss()
+-        scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
++        scaler = torch.amp.GradScaler("cuda", enabled=use_scaler)
+         from . import loader_kwargs
+ 
+         loader = DataLoader(
+             dataset,
+             batch_size=self.batch_size,
+             shuffle=True,
+-            pin_memory=use_amp,
++            pin_memory=use_scaler,
+             **loader_kwargs(),
+         )
+ 
+@@ -102,13 +123,20 @@ class HuangVGG19(Pipeline):
+                 tensors = tensors.to(self._device, non_blocking=True)
+                 labels = labels.to(self._device, non_blocking=True).long()
+                 optim.zero_grad(set_to_none=True)
+-                with torch.cuda.amp.autocast(enabled=use_amp):
++                with torch.amp.autocast(self._device, enabled=use_amp):
+                     logits = self._model(tensors)
+                     loss = loss_fn(logits, labels)
+-                scaler.scale(loss).backward()
+-                scaler.step(optim)
+-                scaler.update()
++                if use_scaler:
++                    scaler.scale(loss).backward()
++                    scaler.step(optim)
++                    scaler.update()
++                else:
++                    loss.backward()
++                    optim.step()
+             sched.step()
++        self.__class__._LAST_FIT_KEY = fit_key
++        self.__class__._LAST_MODEL = self._model
++        self.__class__._LAST_DEVICE = self._device
+ 
+     def predict_proba(self, dataset) -> np.ndarray:
+         import torch
+diff --git a/paper_reproduction/src/parkinson_spiral/runner.py b/paper_reproduction/src/parkinson_spiral/runner.py
+index 02fa286..9dfdaad 100644
+--- a/paper_reproduction/src/parkinson_spiral/runner.py
++++ b/paper_reproduction/src/parkinson_spiral/runner.py
+@@ -7,6 +7,8 @@ converges to a complete local result directory without recomputing finished cell
+ """
+ 
+ import json
++import platform
++import random
+ from dataclasses import dataclass
+ from pathlib import Path
+ from typing import Any
+@@ -129,6 +131,24 @@ def _recipe_kwargs_for_spec(spec: CellSpec) -> dict[str, Any]:
+     return kwargs
+ 
+ 
++def _configure_reproducibility(seed: int) -> None:
++    """Seed the libraries shared by the paper pipelines."""
++    random.seed(seed)
++    np.random.seed(seed)
++
++    try:
++        import torch
++    except ImportError:
++        return
++
++    torch.manual_seed(seed)
++    torch.use_deterministic_algorithms(True, warn_only=True)
++    if torch.cuda.is_available():
++        torch.cuda.manual_seed_all(seed)
++        torch.backends.cudnn.benchmark = False
++        torch.backends.cudnn.deterministic = True
++
++
+ def _is_cached(paths: RunPaths, cell_id: str) -> bool:
+     pred_path = paths.predictions_dir / f"{cell_id}.parquet"
+     if not pred_path.is_file() or not paths.cells_path.is_file():
+@@ -189,6 +209,7 @@ def run_cell(spec: CellSpec, paths: RunPaths, *, force: bool = False) -> dict[st
+     )
+ 
+     pipeline: Pipeline = get_pipeline(spec.pipeline_name, **spec.pipeline_kwargs)
++    _configure_reproducibility(spec.seed)
+ 
+     with ComputeMonitor() as fit_mon:
+         pipeline.fit(train_ds, seed=spec.seed)
+@@ -237,6 +258,9 @@ def run_cell(spec: CellSpec, paths: RunPaths, *, force: bool = False) -> dict[st
+         "fit_seconds": fit_mon.wall_seconds,
+         "predict_seconds": pred_mon.wall_seconds,
+         "gpu_peak_mb": fit_mon.gpu_peak_mb,
++        "accelerator_device": getattr(pipeline, "_device", None),
++        "python_version": platform.python_version(),
++        "platform": platform.platform(),
+         "infer_latency_ms_per_img": latency,
+         "predictions_path": str(pred_path),
+     }
+diff --git a/paper_reproduction/tests/test_analysis.py b/paper_reproduction/tests/test_analysis.py
+index 675abd9..4d232aa 100644
+--- a/paper_reproduction/tests/test_analysis.py
++++ b/paper_reproduction/tests/test_analysis.py
+@@ -33,10 +33,13 @@ def test_catalog_matches_local_results(results):
+ @pytest.mark.parametrize(
+     "pipeline,recipe,expected",
+     [
+-        ("dinov2_probe", "AUG-None", 0.604),
+-        ("huang_vgg19", "AUG-Huang", 0.627),
+-        ("dogan_triple", "AUG-Dogan", 0.565),
+-        ("folador_hog", "AUG-None", 0.537),
++        # Values reflect corrected kaggle subject IDs (28 subjects, not 130 pseudo-IDs),
++        # StratifiedKFold on subjects, and 20 hemato duplicate removals. These differ
++        # from paper v5 which used the uncorrected splits.
++        ("dinov2_probe", "AUG-None", 0.5999),
++        ("huang_vgg19", "AUG-Huang", 0.4591),
++        ("dogan_triple", "AUG-Dogan", 0.5599),
++        ("folador_hog", "AUG-None", 0.5401),
+     ],
+ )
+ def test_offdiagonal_means(results, pipeline, recipe, expected):
+@@ -55,5 +58,6 @@ def test_dinov2_hemato_ceiling(results):
+         test_source="hemato",
+         split_source="cv-fold",
+     )
+-    assert s["accuracy"] == pytest.approx(0.739, abs=5e-4)
+-    assert s["auc"] == pytest.approx(0.752, abs=5e-4)
++    # Corrected from paper v5 (0.739/0.752) due to subject-level fold correction.
++    assert s["accuracy"] == pytest.approx(0.7826, abs=5e-4)
++    assert s["auc"] == pytest.approx(0.7797, abs=5e-4)
+diff --git a/paper_reproduction/tests/test_catalog.py b/paper_reproduction/tests/test_catalog.py
+index 443a554..896df00 100644
+--- a/paper_reproduction/tests/test_catalog.py
++++ b/paper_reproduction/tests/test_catalog.py
+@@ -37,12 +37,14 @@ def test_folador_reports_svm_linear_head():
+     assert all(c.pipeline_kwargs.get("classifier") == "SVM_linear" for c in folador)
+ 
+ 
+-def test_dogan_published_cell_emits_augment_then_split_variants():
+-    dogan_published = [
+-        c
+-        for c in group_c()
+-        if c.pipeline_name == "dogan_triple" and c.recipe_name == "AUG-Dogan" and c.augment_then_split
+-    ]
+-    assert len(dogan_published) == 1
++def test_dogan_cells_use_bounded_frozen_backbones():
++    dogan = [c for c in all_cells() if c.pipeline_name == "dogan_triple"]
++    assert dogan
++    assert all(c.pipeline_kwargs.get("fine_tune") is False for c in dogan)
++
+ 
+-    assert _recipe_kwargs_for_spec(dogan_published[0])["augment_then_split"] is True
++def test_dogan_published_cell_uses_auditable_split_first_semantics():
++    dogan_published = [c for c in group_c() if c.pipeline_name == "dogan_triple" and c.recipe_name == "AUG-Dogan"]
++    assert len(dogan_published) == 1
++    assert dogan_published[0].augment_then_split is False
++    assert _recipe_kwargs_for_spec(dogan_published[0])["augment_then_split"] is False
+diff --git a/paper_reproduction/tests/test_protocol.py b/paper_reproduction/tests/test_protocol.py
+index 0d96707..bc2aa2f 100644
+--- a/paper_reproduction/tests/test_protocol.py
++++ b/paper_reproduction/tests/test_protocol.py
+@@ -1,7 +1,10 @@
+ """CellSpec identity + validation contracts."""
+ 
++import pandas as pd
+ import pytest
+ from parkinson_spiral import DEFAULT_SEED
++from parkinson_spiral.data.kaggle import _subject_id
++from parkinson_spiral.data.splits import assign_subject_folds
+ from parkinson_spiral.protocol import CellSpec
+ 
+ 
+@@ -59,3 +62,22 @@ def test_cross_dataset_must_be_off_diagonal():
+ 
+ def test_valid_spec_passes():
+     _spec().validate()  # must not raise
++
++
++def test_kaggle_spiral_and_wave_files_share_subject_identity():
++    assert _subject_id("V03PE02.png", "parkinson") == "kaggle:V03P"
++    assert _subject_id("V03PO02.png", "parkinson") == "kaggle:V03P"
++    assert _subject_id("V07HE01.png", "healthy") == "kaggle:V07H"
++    assert _subject_id("V07HO01.png", "healthy") == "kaggle:V07H"
++
++
++def test_fold_assignment_gives_each_subject_exactly_one_fold():
++    manifest = pd.DataFrame({
++        "dataset": ["kaggle"] * 24,
++        "subject_id": [f"s{i}" for i in range(10) for _ in range(2)] + ["s10"] * 4,
++        "class_label": ["healthy"] * 10 + ["parkinson"] * 14,
++    })
++    folded = assign_subject_folds(manifest, datasets=("kaggle",), n_splits=2)
++    assert folded.groupby("subject_id")["cv_fold"].nunique().eq(1).all()
++    subject_folds = folded[["subject_id", "class_label", "cv_fold"]].drop_duplicates()
++    assert sorted(subject_folds.groupby("cv_fold")["subject_id"].size().tolist()) == [5, 6]
+diff --git a/src/parkinson_model_train/data.py b/src/parkinson_model_train/data.py
+index 4c710c0..9a149a0 100644
+--- a/src/parkinson_model_train/data.py
++++ b/src/parkinson_model_train/data.py
+@@ -328,6 +328,22 @@ def validate_image_paths(records: list[ImageRecord]) -> None:
+         raise ValueError(msg)
+ 
+ 
++def validate_subject_labels(records: list[ImageRecord]) -> None:
++    """Raise ValueError if one subject is assigned conflicting labels."""
++    labels_by_subject: dict[str, set[str]] = {}
++    for record in records:
++        labels_by_subject.setdefault(record.subject_id, set()).add(record.label)
++
++    conflicts = {subject_id: sorted(labels) for subject_id, labels in labels_by_subject.items() if len(labels) > 1}
++    if conflicts:
++        preview = "; ".join(
++            f"{subject_id}: {', '.join(labels)}" for subject_id, labels in sorted(conflicts.items())[:5]
++        )
++        suffix = "" if len(conflicts) <= 5 else f"; and {len(conflicts) - 5} more"
++        msg = f"Subjects have conflicting labels: {preview}{suffix}"
++        raise ValueError(msg)
++
++
+ def _is_image_file(path: Path) -> bool:
+     return path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS and not path.name.startswith("._")
+ 
+diff --git a/src/parkinson_model_train/main.py b/src/parkinson_model_train/main.py
+index 62c9fa5..d689ce7 100644
+--- a/src/parkinson_model_train/main.py
++++ b/src/parkinson_model_train/main.py
+@@ -12,6 +12,7 @@ from parkinson_model_train.data import (
+     load_manifest,
+     split_by_subject,
+     validate_image_paths,
++    validate_subject_labels,
+     write_manifest,
+ )
+ from parkinson_model_train.train import train_classifier
+@@ -26,6 +27,7 @@ def validate_manifest(
+ ) -> None:
+     """Validate the input manifest and print its class/subject summary."""
+     records = load_manifest(manifest)
++    validate_subject_labels(records)
+     if check_files:
+         validate_image_paths(records)
+     labels = labels_to_indices(records)
+@@ -82,7 +84,7 @@ def train(
+     num_workers: Annotated[int, typer.Option(help="PyTorch DataLoader worker count.")] = 4,
+     model_name: Annotated[str, typer.Option(help="timm DINO/DINOv2 model name.")] = "vit_small_patch14_dinov2",
+     image_size: Annotated[int, typer.Option(help="Image size used by transforms.")] = 512,
+-    device: Annotated[str, typer.Option(help="auto, cpu, cuda, or a torch device string.")] = "auto",
++    device: Annotated[str, typer.Option(help="auto, cpu, cuda, mps, or a torch device string.")] = "auto",
+     augment: Annotated[bool, typer.Option(help="Apply train-only image augmentation.")] = True,
+     rotation_degrees: Annotated[float, typer.Option(help="Maximum random train rotation in degrees.")] = 10.0,
+     crop_scale_min: Annotated[float, typer.Option(help="Minimum random crop area fraction.")] = 0.9,
+diff --git a/src/parkinson_model_train/train.py b/src/parkinson_model_train/train.py
+index 1e63c0e..cf7e1a3 100644
+--- a/src/parkinson_model_train/train.py
++++ b/src/parkinson_model_train/train.py
+@@ -1,6 +1,9 @@
+ """Frozen DINO encoder training for Parkinson drawing crops."""
+ 
++import hashlib
+ import json
++import platform
++import random
+ from pathlib import Path
+ from typing import TYPE_CHECKING
+ 
+@@ -11,6 +14,7 @@ from parkinson_model_train.data import (
+     split_by_subject,
+     validate_image_paths,
+     validate_split_labels,
++    validate_subject_labels,
+ )
+ 
+ if TYPE_CHECKING:
+@@ -33,6 +37,7 @@ def train_classifier(config: TrainingConfig) -> Path:
+         label_column=config.label_column,
+     )
+     validate_image_paths(records)
++    validate_subject_labels(records)
+     label_to_index = labels_to_indices(records)
+     split = split_by_subject(
+         records,
+@@ -43,6 +48,7 @@ def train_classifier(config: TrainingConfig) -> Path:
+     validate_split_labels(split)
+ 
+     device = _resolve_device(config.device)
++    generator = _configure_reproducibility(config.seed, device)
+     train_transform, eval_transform = build_image_transforms(config)
+ 
+     train_loader = DataLoader(
+@@ -50,6 +56,7 @@ def train_classifier(config: TrainingConfig) -> Path:
+         batch_size=config.batch_size,
+         shuffle=True,
+         num_workers=config.num_workers,
++        generator=generator,
+     )
+     val_loader = DataLoader(
+         DrawingDataset(split.val, label_to_index, eval_transform),
+@@ -106,7 +113,7 @@ def train_classifier(config: TrainingConfig) -> Path:
+     test_metrics = (
+         _evaluate(encoder, classifier, test_loader, loss_fn, device) if split.test else {"loss": 0.0, "accuracy": 0.0}
+     )
+-    _write_run_summary(config.output_dir, label_to_index, split, test_metrics)
++    _write_run_summary(config, label_to_index, split, test_metrics)
+     return checkpoint_path
+ 
+ 
+@@ -225,12 +232,46 @@ def _resolve_device(device: str) -> "torch.device":
+     import torch
+ 
+     if device == "auto":
+-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
++        if torch.cuda.is_available():
++            return torch.device("cuda")
++        if torch.backends.mps.is_available():
++            return torch.device("mps")
++        return torch.device("cpu")
+     return torch.device(device)
+ 
+ 
+-def _write_run_summary(output_dir, label_to_index, split, test_metrics) -> None:
++def _configure_reproducibility(seed: int, device: "torch.device"):
++    """Seed stochastic libraries and return a seeded DataLoader generator."""
++    import torch
++
++    random.seed(seed)
++    torch.manual_seed(seed)
++    torch.use_deterministic_algorithms(True, warn_only=True)
++    if device.type == "cuda":
++        torch.cuda.manual_seed_all(seed)
++        torch.backends.cudnn.benchmark = False
++        torch.backends.cudnn.deterministic = True
++
++    generator = torch.Generator()
++    generator.manual_seed(seed)
++    return generator
++
++
++def _write_run_summary(config, label_to_index, split, test_metrics) -> None:
++    import timm
++    import torch
++    import torchvision
++
+     summary = {
++        "config": {key: str(value) if isinstance(value, Path) else value for key, value in config.__dict__.items()},
++        "environment": {
++            "python": platform.python_version(),
++            "platform": platform.platform(),
++            "torch": torch.__version__,
++            "torchvision": torchvision.__version__,
++            "timm": timm.__version__,
++        },
++        "manifest_sha256": hashlib.sha256(config.manifest_path.read_bytes()).hexdigest(),
+         "label_to_index": label_to_index,
+         "split_counts": {"train": len(split.train), "val": len(split.val), "test": len(split.test)},
+         "subject_counts": {
+@@ -238,6 +279,14 @@ def _write_run_summary(output_dir, label_to_index, split, test_metrics) -> None:
+             "val": len({record.subject_id for record in split.val}),
+             "test": len({record.subject_id for record in split.test}),
+         },
++        "subjects": {
++            "train": sorted({record.subject_id for record in split.train}),
++            "val": sorted({record.subject_id for record in split.val}),
++            "test": sorted({record.subject_id for record in split.test}),
++        },
+         "test_metrics": test_metrics,
+     }
+-    Path(output_dir, "run_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
++    Path(config.output_dir, "run_summary.json").write_text(
++        json.dumps(summary, indent=2, sort_keys=True),
++        encoding="utf-8",
++    )
+diff --git a/tests/test_data.py b/tests/test_data.py
+index ccdbadb..e05e877 100644
+--- a/tests/test_data.py
++++ b/tests/test_data.py
+@@ -18,6 +18,7 @@ from parkinson_model_train.data import (
+     split_by_subject,
+     validate_image_paths,
+     validate_split_labels,
++    validate_subject_labels,
+     write_manifest,
+ )
+ 
+@@ -79,6 +80,16 @@ def test_validate_image_paths_reports_missing_files(tmp_path: Path) -> None:
+         validate_image_paths(records)
+ 
+ 
++def test_validate_subject_labels_rejects_conflicts() -> None:
++    records = [
++        ImageRecord(image_path=Path("pd.png"), subject_id="s1", label="PD"),
++        ImageRecord(image_path=Path("hc.png"), subject_id="s1", label="HC"),
++    ]
++
++    with pytest.raises(ValueError, match="s1: HC, PD"):
++        validate_subject_labels(records)
++
++
+ def test_split_by_subject_prevents_subject_leakage() -> None:
+     records = [
+         ImageRecord(image_path=Path(f"/tmp/{subject}-{index}.png"), subject_id=subject, label="PD" if index else "HC")
+diff --git a/tests/test_train.py b/tests/test_train.py
+index 19ae3f8..8434898 100644
+--- a/tests/test_train.py
++++ b/tests/test_train.py
+@@ -4,7 +4,7 @@ import pytest
+ from PIL import Image
+ 
+ from parkinson_model_train.config import TrainingConfig
+-from parkinson_model_train.train import build_image_transforms
++from parkinson_model_train.train import _resolve_device, build_image_transforms
+ 
+ 
+ def test_build_image_transforms_uses_train_only_augmentation(tmp_path: Path) -> None:
+@@ -50,6 +50,10 @@ def test_image_transform_returns_pytorch_tensor(tmp_path: Path) -> None:
+     assert tuple(tensor.shape) == (3, 32, 32)
+ 
+ 
++def test_resolve_device_accepts_apple_mps() -> None:
++    assert _resolve_device("mps").type == "mps"
++
++
+ @pytest.mark.parametrize(
+     ("option", "value", "message"),
+     [

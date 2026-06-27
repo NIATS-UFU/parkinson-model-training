@@ -6,14 +6,29 @@ import sys
 from ..protocol import Pipeline
 
 
+def accelerator_device() -> str:
+    """Return the best available PyTorch accelerator, including Apple MPS."""
+    import torch
+
+    if torch.cuda.is_available():
+        return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
 def loader_kwargs() -> dict:
     """DataLoader worker settings that are safe on the host OS.
 
-    Windows (and Python 3.14+ POSIX) start workers with `spawn`, which pickles the
-    dataset and recipe transforms — fragile and prone to worker-pool hangs — so we
-    load single-process there. Linux uses `fork`, where workers are cheap and the
-    GPU pipelines benefit, so we keep 2."""
-    if os.name == "nt" or sys.version_info >= (3, 14):
+    Windows, macOS, and Python 3.14+ POSIX all use `spawn` for worker processes,
+    which requires pickling the dataset and transforms. With spawn, persistent
+    worker processes can deadlock against framework initialisation (e.g. TF CPU
+    thread pools competing with PyTorch MPS on macOS). Linux `fork` avoids all of
+    this, so we keep 2 workers only there."""
+    import platform
+
+    use_spawn = os.name == "nt" or platform.system() == "Darwin" or sys.version_info >= (3, 14)
+    if use_spawn:
         return {"num_workers": 0}
     return {"num_workers": 2, "persistent_workers": True}
 

@@ -6,6 +6,8 @@ CPU-only (the frozen backbone is a public download; only the linear probe is fit
 by us). Falls back to `vit_size="vits14"` if vitb14 OOMs.
 """
 
+import os
+from pathlib import Path
 from typing import ClassVar
 
 import numpy as np
@@ -31,6 +33,8 @@ class DinoV2Probe(Pipeline):
         "memory, the harness falls back to vits14 (22M params, 384-d CLS token) and the "
         "size-vs-accuracy trade-off is reported."
     )
+    _BACKBONE_CACHE: ClassVar[dict[tuple[str, str], object]] = {}
+    _FEATURE_CACHE: ClassVar[dict[tuple[str, str], np.ndarray]] = {}
 
     def __init__(
         self,
@@ -51,12 +55,43 @@ class DinoV2Probe(Pipeline):
             return
         import torch
 
-        backbone = torch.hub.load(_DINOV2_HUB_REPO, f"dinov2_{self.vit_size}")
-        backbone.eval()
-        for p in backbone.parameters():
-            p.requires_grad = False
-        self._device = "cuda" if torch.cuda.is_available() else "cpu"
-        self._backbone = backbone.to(self._device)
+        from . import accelerator_device
+
+        self._device = accelerator_device()
+        cache_key = (self.vit_size, self._device)
+        backbone = self._BACKBONE_CACHE.get(cache_key)
+        if backbone is None:
+            local_repo = os.environ.get("DINOV2_REPO_DIR")
+            local_weights = os.environ.get("DINOV2_WEIGHTS")
+            if bool(local_repo) != bool(local_weights):
+                raise ValueError("DINOV2_REPO_DIR and DINOV2_WEIGHTS must be set together")
+            if local_repo and local_weights:
+                repo_path = Path(local_repo)
+                weights_path = Path(local_weights)
+                if not repo_path.is_dir():
+                    raise FileNotFoundError(f"DINOv2 source directory not found: {repo_path}")
+                if not weights_path.is_file():
+                    raise FileNotFoundError(f"DINOv2 weights not found: {weights_path}")
+                backbone = torch.hub.load(
+                    str(repo_path),
+                    f"dinov2_{self.vit_size}",
+                    source="local",
+                    weights=str(weights_path),
+                )
+            else:
+                backbone = torch.hub.load(_DINOV2_HUB_REPO, f"dinov2_{self.vit_size}")
+            backbone.eval()
+            for p in backbone.parameters():
+                p.requires_grad = False
+            backbone = backbone.to(self._device)
+            self._BACKBONE_CACHE[cache_key] = backbone
+        self._backbone = backbone
+
+    @staticmethod
+    def _can_cache_features(dataset) -> bool:
+        """Return whether the dataset transform is deterministic per image."""
+        recipe_name = getattr(getattr(dataset, "recipe", None), "meta", None)
+        return getattr(recipe_name, "name", None) == "AUG-None" and not getattr(dataset, "augment_then_split", False)
 
     def _extract(self, dataset) -> tuple[np.ndarray, np.ndarray]:
         import torch
@@ -74,11 +109,30 @@ class DinoV2Probe(Pipeline):
         )
         feats: list[np.ndarray] = []
         labels: list[np.ndarray] = []
+        use_cache = self._can_cache_features(dataset)
         with torch.inference_mode():
-            for tensors, label_ints, _image_ids in loader:
-                tensors = tensors.to(self._device, non_blocking=True)
-                cls = self._backbone(tensors)  # (B, D)
-                feats.append(cls.detach().cpu().numpy())
+            for tensors, label_ints, image_ids in loader:
+                batch_features: list[np.ndarray | None] = [None] * len(image_ids)
+                missing_indices: list[int] = []
+                if use_cache:
+                    for index, image_id in enumerate(image_ids):
+                        cached = self._FEATURE_CACHE.get((self.vit_size, str(image_id)))
+                        if cached is None:
+                            missing_indices.append(index)
+                        else:
+                            batch_features[index] = cached
+                else:
+                    missing_indices = list(range(len(image_ids)))
+
+                if missing_indices:
+                    missing_tensors = tensors[missing_indices].to(self._device, non_blocking=True)
+                    missing_features = self._backbone(missing_tensors).detach().cpu().numpy()
+                    for index, feature in zip(missing_indices, missing_features, strict=True):
+                        batch_features[index] = feature
+                        if use_cache:
+                            self._FEATURE_CACHE[(self.vit_size, str(image_ids[index]))] = feature
+
+                feats.append(np.stack(batch_features, axis=0))
                 labels.append(np.asarray(label_ints))
         return np.concatenate(feats, axis=0), np.concatenate(labels, axis=0)
 

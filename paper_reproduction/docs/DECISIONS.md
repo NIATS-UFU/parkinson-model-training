@@ -32,9 +32,19 @@ reproduction release for review.
 
 ## Experiment Semantics
 
-- The Dogan published-split fidelity cell propagates `augment_then_split=True` into
-  the `AUG-Dogan` recipe so the dataset emits the intended eight deterministic
-  rotation/flip variants per source image.
+- Cross-dataset cells with the same pipeline, recipe, seed, and training source
+  reuse one fitted source model for both foreign test datasets. This preserves
+  the intended matrix semantics: a matrix row is one trained source model
+  evaluated against multiple targets, not two independently randomized fits.
+- The Dogan paper reports augmentation before splitting, but does not publish the
+  random split or variant assignment needed to reproduce that leakage. The
+  released fidelity cell therefore uses the public released split and applies
+  augmentation only to training images. The paper's 99.39% is retained only as
+  an unverified, non-participant-disjoint upper bound.
+- All three Dogan backbones are frozen public feature extractors in the bounded
+  M4 reproduction. TensorFlow 2.21 exposes no Apple Metal device, so literal
+  NASNetMobile fine-tuning would leave one branch on CPU and make the claimed
+  three-backbone regime neither uniform nor submission-feasible.
 - The catalog remains the source of truth for the 97 full-paper cells. Partial runs
   are allowed only as local reruns when the manifest lacks restricted data.
 

@@ -1,7 +1,10 @@
 """CellSpec identity + validation contracts."""
 
+import pandas as pd
 import pytest
 from parkinson_spiral import DEFAULT_SEED
+from parkinson_spiral.data.kaggle import _subject_id
+from parkinson_spiral.data.splits import assign_subject_folds
 from parkinson_spiral.protocol import CellSpec
 
 
@@ -59,3 +62,22 @@ def test_cross_dataset_must_be_off_diagonal():
 
 def test_valid_spec_passes():
     _spec().validate()  # must not raise
+
+
+def test_kaggle_spiral_and_wave_files_share_subject_identity():
+    assert _subject_id("V03PE02.png", "parkinson") == "kaggle:V03P"
+    assert _subject_id("V03PO02.png", "parkinson") == "kaggle:V03P"
+    assert _subject_id("V07HE01.png", "healthy") == "kaggle:V07H"
+    assert _subject_id("V07HO01.png", "healthy") == "kaggle:V07H"
+
+
+def test_fold_assignment_gives_each_subject_exactly_one_fold():
+    manifest = pd.DataFrame({
+        "dataset": ["kaggle"] * 24,
+        "subject_id": [f"s{i}" for i in range(10) for _ in range(2)] + ["s10"] * 4,
+        "class_label": ["healthy"] * 10 + ["parkinson"] * 14,
+    })
+    folded = assign_subject_folds(manifest, datasets=("kaggle",), n_splits=2)
+    assert folded.groupby("subject_id")["cv_fold"].nunique().eq(1).all()
+    subject_folds = folded[["subject_id", "class_label", "cv_fold"]].drop_duplicates()
+    assert sorted(subject_folds.groupby("cv_fold")["subject_id"].size().tolist()) == [5, 6]

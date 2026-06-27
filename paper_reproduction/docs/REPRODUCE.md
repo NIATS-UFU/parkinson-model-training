@@ -84,12 +84,18 @@ recomputes even cached cells.
 |---|---|---|
 | `dinov2_probe` | frozen public backbone → features → one logistic fit | **No** (CPU fine) |
 | `folador_hog` | deterministic HOG features → SVM/RFC/KNN/CNN1D head | **No** |
-| `dogan_triple` | 3 CNN backbones fine-tuned + NCA + linear SVM | **Yes** — except the Hemato CV folds, which are small enough for CPU |
+| `dogan_triple` | three frozen public backbones + NCA + linear SVM | **Mixed** — PyTorch extraction uses MPS/CUDA; TensorFlow NASNetMobile may remain on CPU |
 | `huang_vgg19` | VGG19 end-to-end fine-tune, 50 epochs | **Yes** |
 
 CPU-only reproduction (DINOv2 + Folador HOG + Dogan-on-Hemato) covers the paper's
 central H2/H4 story; the GPU pipelines are needed for the literature in-domain
 ceilings and the full 3×3 matrices of Huang/Dogan.
+
+On Apple Silicon, the PyTorch portions of DINOv2, Huang VGG19, and Dogan
+automatically use the Metal Performance Shaders (`mps`) backend. CUDA mixed
+precision remains disabled on MPS. Dogan's TensorFlow NASNetMobile branch uses
+whatever TensorFlow device support is installed and may remain on CPU unless a
+compatible TensorFlow Metal plugin is configured separately.
 
 The notebook splits this for you: **Section 1** runs the CPU-only subset, and
 **Section 2** runs the GPU pipelines behind a `torch.cuda.is_available()` guard.

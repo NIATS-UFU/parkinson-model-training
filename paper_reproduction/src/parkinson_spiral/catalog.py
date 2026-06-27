@@ -19,6 +19,10 @@ N_FOLDS = 5
 
 # Folador HOG reports its SVM_linear head in the paper.
 _FOLADOR_KW = {"classifier": "SVM_linear"}
+# The bounded M4 reproduction uses all three public backbones as frozen feature
+# extractors. Literal three-backbone fine-tuning is not feasible because the
+# TensorFlow runtime exposes no Apple Metal device.
+_DOGAN_KW = {"fine_tune": False}
 
 
 def _cv(pipeline: str, recipe: str, source: str, pipeline_kwargs: dict | None = None) -> list[CellSpec]:
@@ -97,7 +101,7 @@ def group_a() -> list[CellSpec]:
     for source in SOURCES:
         cells += _cv("huang_vgg19", "AUG-Huang", source)
     for source in SOURCES:
-        cells += _cv("dogan_triple", "AUG-Dogan", source)
+        cells += _cv("dogan_triple", "AUG-Dogan", source, _DOGAN_KW)
     for source in SOURCES:
         cells += _cv("folador_hog", "AUG-None", source, _FOLADOR_KW)
     return cells
@@ -108,7 +112,7 @@ def group_b() -> list[CellSpec]:
     return (
         _cross("dinov2_probe", "AUG-None")
         + _cross("huang_vgg19", "AUG-Huang")
-        + _cross("dogan_triple", "AUG-Dogan")
+        + _cross("dogan_triple", "AUG-Dogan", _DOGAN_KW)
         + _cross("folador_hog", "AUG-None", _FOLADOR_KW)
     )
 
@@ -118,8 +122,17 @@ def group_c() -> list[CellSpec]:
     return [
         # Huang VGG19 on Kaggle's released split.
         _published("huang_vgg19", "AUG-Huang", "kaggle", augment_then_split=False),
-        # Dogan triple on Kaggle's released split, augment-before-split (literature's leaky order).
-        _published("dogan_triple", "AUG-Dogan", "kaggle", augment_then_split=True),
+        # Dogan triple on Kaggle's released split. The source paper reports augmentation
+        # before splitting, but does not publish enough split detail to reproduce that
+        # leakage exactly; this release therefore keeps the auditable released split and
+        # applies augmentation only to its training partition.
+        _published(
+            "dogan_triple",
+            "AUG-Dogan",
+            "kaggle",
+            augment_then_split=False,
+            pipeline_kwargs=_DOGAN_KW,
+        ),
         # Folador HOG+SVM on the Folador dataset's released split.
         _published("folador_hog", "AUG-None", "folador", augment_then_split=False, pipeline_kwargs=_FOLADOR_KW),
     ]

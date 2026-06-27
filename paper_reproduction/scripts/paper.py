@@ -8,7 +8,14 @@ Usage:
 """
 
 import argparse
+import hashlib
+import importlib.metadata
+import json
+import platform
+import shutil
+import subprocess
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
@@ -43,7 +50,7 @@ PUBLISHED_LITERATURE = {
 TRAINING_REGIME = {
     "dinov2_probe": "frozen backbone; single-pass features + 1 logistic fit",
     "folador_hog": "deterministic HOG + classifier fit (no epochs)",
-    "dogan_triple": "3 backbones fine-tuned + NCA + linear SVM",
+    "dogan_triple": "3 frozen public backbones + NCA + linear SVM",
     "huang_vgg19": "end-to-end fine-tune, 50 epochs",
 }
 GPU_PIPELINES = {"huang_vgg19", "dogan_triple"}
@@ -454,6 +461,239 @@ def verify_catalog_command(args: argparse.Namespace) -> int:
     return 1
 
 
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as file:
+        for chunk in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _display_path(path: Path, repo: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(repo.resolve()))
+    except ValueError:
+        return str(path.resolve())
+
+
+def _git_value(repo: Path, *args: str) -> str | None:
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return completed.stdout.strip() if completed.returncode == 0 else None
+
+
+def _command_output(*args: str) -> str | None:
+    completed = subprocess.run(args, check=False, capture_output=True, text=True)
+    return completed.stdout.strip() if completed.returncode == 0 else None
+
+
+def _hardware_profile() -> dict[str, str]:
+    raw = _command_output("system_profiler", "SPHardwareDataType")
+    if raw is None:
+        return {}
+    allowed = {"Model Name", "Model Identifier", "Chip", "Total Number of Cores", "Memory"}
+    profile = {}
+    for line in raw.splitlines():
+        if ":" not in line:
+            continue
+        key, value = (part.strip() for part in line.split(":", 1))
+        if key in allowed:
+            profile[key] = value
+    return profile
+
+
+def freeze_evidence_command(args: argparse.Namespace) -> int:
+    """Freeze manifest, folds, catalog, environment, and artifact checksums."""
+    repo = Path(__file__).resolve().parents[2]
+    manifest = pd.read_parquet(args.manifest)
+    args.out.mkdir(parents=True, exist_ok=True)
+
+    subject_folds = (
+        manifest[["dataset", "subject_id", "class_label", "cv_fold"]]
+        .drop_duplicates()
+        .sort_values(["dataset", "subject_id"])
+    )
+    conflicting = subject_folds.groupby(["dataset", "subject_id"]).size()
+    if (conflicting > 1).any():
+        raise ValueError("manifest assigns conflicting labels or CV folds to at least one subject")
+    subject_folds.to_csv(args.out / "subject_folds.csv", index=False)
+    if args.historical_manifest.is_file():
+        historical = pd.read_parquet(args.historical_manifest)
+        historical["dataset"] = historical["dataset"].replace({"niats": "folador"})
+        historical["subject_id"] = (
+            historical["subject_id"]
+            .astype(str)
+            .str.replace(
+                "niats:",
+                "folador:",
+                regex=False,
+            )
+        )
+        historical_folds = (
+            historical[["dataset", "subject_id", "class_label", "cv_fold"]]
+            .drop_duplicates()
+            .sort_values(["dataset", "subject_id"])
+        )
+        historical_folds.to_csv(args.out / "historical_subject_folds.csv", index=False)
+        comparison = historical_folds.merge(
+            subject_folds,
+            on=["dataset", "subject_id", "class_label"],
+            suffixes=("_historical", "_current"),
+            validate="one_to_one",
+        )
+        comparison["changed"] = comparison["cv_fold_historical"] != comparison["cv_fold_current"]
+        fold_comparison = {
+            "historical_manifest": _display_path(args.historical_manifest, repo),
+            "historical_manifest_sha256": _sha256(args.historical_manifest),
+            "subjects_compared": len(comparison),
+            "subjects_changed": int(comparison["changed"].sum()),
+            "by_dataset": {
+                dataset: {
+                    "subjects": len(group),
+                    "subjects_changed": int(group["changed"].sum()),
+                }
+                for dataset, group in comparison.groupby("dataset")
+            },
+        }
+        (args.out / "fold_comparison.json").write_text(
+            json.dumps(fold_comparison, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+
+    catalog = [{"cell_id": spec.cell_id, **asdict(spec)} for spec in all_cells()]
+    (args.out / "catalog.json").write_text(json.dumps(catalog, indent=2, sort_keys=True), encoding="utf-8")
+    model_configurations = {
+        name: {
+            "free_hyperparameters": get_pipeline_class(name).FREE_HYPERPARAMETERS,
+            "methods_notes": get_pipeline_class(name).METHODS_SECTION_NOTES,
+        }
+        for name in sorted({spec.pipeline_name for spec in all_cells()})
+    }
+    (args.out / "model_configurations.json").write_text(
+        json.dumps(model_configurations, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    packages = {}
+    for name in [
+        "numpy",
+        "pandas",
+        "pyarrow",
+        "scikit-learn",
+        "scikit-image",
+        "pillow",
+        "torch",
+        "torchvision",
+        "timm",
+        "tensorflow",
+    ]:
+        try:
+            packages[name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            packages[name] = None
+
+    accelerator: dict[str, bool | str | None] = {"torch_available": packages["torch"] is not None}
+    if packages["torch"] is not None:
+        import torch
+
+        accelerator.update({
+            "cuda_available": torch.cuda.is_available(),
+            "mps_available": torch.backends.mps.is_available(),
+            "mps_built": torch.backends.mps.is_built(),
+        })
+
+    environment = {
+        "python": platform.python_version(),
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "packages": packages,
+        "accelerator": accelerator,
+        "git_commit": _git_value(repo, "rev-parse", "HEAD"),
+        "git_branch": _git_value(repo, "branch", "--show-current"),
+        "git_status": _git_value(repo, "status", "--short"),
+        "manifest_rows": len(manifest),
+        "manifest_sha256": _sha256(args.manifest),
+        "catalog_cells": len(catalog),
+        "hardware_profile": _hardware_profile(),
+        "run_device_policy": {
+            "dinov2_probe": "PyTorch MPS",
+            "huang_vgg19": "PyTorch MPS, full precision",
+            "dogan_triple_torch": "PyTorch MPS",
+            "dogan_triple_nasnetmobile": "TensorFlow CPU",
+            "folador_hog": "CPU",
+        },
+        "tensorflow_devices": _command_output(
+            str(Path(sys.executable)),
+            "-c",
+            "import tensorflow as tf; print(tf.config.list_physical_devices())",
+        )
+        if packages["tensorflow"] is not None
+        else None,
+    }
+    (args.out / "environment.json").write_text(
+        json.dumps(environment, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    repository_patch = subprocess.run(
+        ["git", "diff", "--binary", "HEAD"],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+    ).stdout
+    (args.out / "repository.patch").write_text(repository_patch, encoding="utf-8")
+
+    if args.manuscript.is_file():
+        shutil.copy2(args.manuscript, args.out / args.manuscript.name)
+
+    checksum_paths = [args.manifest, repo / "uv.lock", repo / "paper_reproduction" / "uv.lock"]
+    checksum_paths.extend([
+        args.out / "catalog.json",
+        args.out / "model_configurations.json",
+        args.out / "subject_folds.csv",
+        args.out / "environment.json",
+        args.out / "repository.patch",
+    ])
+    if args.historical_manifest.is_file():
+        checksum_paths.extend([
+            args.historical_manifest,
+            args.out / "historical_subject_folds.csv",
+            args.out / "fold_comparison.json",
+        ])
+    if args.manuscript.is_file():
+        checksum_paths.append(args.out / args.manuscript.name)
+    if args.results.is_dir():
+        checksum_paths.extend(sorted(path for path in args.results.rglob("*") if path.is_file()))
+    unique_checksum_paths = dict.fromkeys(path.resolve() for path in checksum_paths if path.is_file())
+    checksum_lines = [
+        f"{_sha256(path)}  {_display_path(path, repo)}"
+        for path in unique_checksum_paths
+        if path != (args.out / "checksums.sha256").resolve()
+    ]
+    (args.out / "checksums.sha256").write_text("\n".join(checksum_lines) + "\n", encoding="utf-8")
+
+    readme = (
+        "# Frozen reproduction evidence\n\n"
+        "Generated by `scripts/paper.py freeze-evidence`.\n\n"
+        "- `environment.json`: runtime, package, accelerator, git, and manifest provenance.\n"
+        "- `subject_folds.csv`: immutable subject label and CV-fold assignment.\n"
+        "- `historical_subject_folds.csv` and `fold_comparison.json`: prior manuscript fold map and drift audit, when supplied.\n"
+        "- `catalog.json`: canonical 97-cell experiment specification.\n"
+        "- `model_configurations.json`: declared hyperparameters and methods notes.\n"
+        "- `repository.patch`: exact uncommitted code state relative to the recorded commit.\n"
+        "- manuscript PDF: frozen submitted manuscript snapshot when supplied.\n"
+        "- `checksums.sha256`: hashes for lockfiles, manifest, and generated result artifacts.\n"
+    )
+    (args.out / "README.md").write_text(readme, encoding="utf-8")
+    print(f"wrote frozen evidence -> {args.out}")
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     repo = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
@@ -480,6 +720,14 @@ def _build_parser() -> argparse.ArgumentParser:
     verify = sub.add_parser("verify-catalog", help="verify catalog cells and prediction parquet files")
     verify.add_argument("--results", type=Path, default=repo / "results")
     verify.set_defaults(func=verify_catalog_command)
+
+    freeze = sub.add_parser("freeze-evidence", help="freeze manifest, folds, environment, and artifact checksums")
+    freeze.add_argument("--manifest", type=Path, default=repo / "results" / "manifest.parquet")
+    freeze.add_argument("--results", type=Path, default=repo / "results")
+    freeze.add_argument("--out", type=Path, default=repo / "evidence")
+    freeze.add_argument("--manuscript", type=Path, default=Path(""))
+    freeze.add_argument("--historical-manifest", type=Path, default=Path(""))
+    freeze.set_defaults(func=freeze_evidence_command)
 
     return parser
 

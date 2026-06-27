@@ -37,12 +37,14 @@ def test_folador_reports_svm_linear_head():
     assert all(c.pipeline_kwargs.get("classifier") == "SVM_linear" for c in folador)
 
 
-def test_dogan_published_cell_emits_augment_then_split_variants():
-    dogan_published = [
-        c
-        for c in group_c()
-        if c.pipeline_name == "dogan_triple" and c.recipe_name == "AUG-Dogan" and c.augment_then_split
-    ]
-    assert len(dogan_published) == 1
+def test_dogan_cells_use_bounded_frozen_backbones():
+    dogan = [c for c in all_cells() if c.pipeline_name == "dogan_triple"]
+    assert dogan
+    assert all(c.pipeline_kwargs.get("fine_tune") is False for c in dogan)
 
-    assert _recipe_kwargs_for_spec(dogan_published[0])["augment_then_split"] is True
+
+def test_dogan_published_cell_uses_auditable_split_first_semantics():
+    dogan_published = [c for c in group_c() if c.pipeline_name == "dogan_triple" and c.recipe_name == "AUG-Dogan"]
+    assert len(dogan_published) == 1
+    assert dogan_published[0].augment_then_split is False
+    assert _recipe_kwargs_for_spec(dogan_published[0])["augment_then_split"] is False

@@ -1,17 +1,16 @@
-"""Subject-level splits: GroupKFold for the within-dataset diagonal, published
+"""Subject-level splits for the within-dataset diagonal, published
 passthrough, and a subject-clean re-split helper.
 
 Decisions:
 - n_splits = 5.
 - random_state = 20260516 (DEFAULT_SEED).
-- StratifiedGroupKFold (sklearn >=1.1) for class balance across folds; falls back
-  to GroupKFold with a warning if unavailable.
+- StratifiedKFold over a one-row-per-subject table. Splitting image rows with
+  StratifiedGroupKFold would let participants with many repeated images dominate
+  fold construction, which is inconsistent with subject-level evaluation.
 - Folds are assigned PER DATASET (each dataset folded over its own subjects), so
   the in-domain ceiling is a within-dataset CV mean for every dataset — not a
   single high-variance subject-clean draw.
 """
-
-import warnings
 
 import pandas as pd
 
@@ -33,30 +32,22 @@ def _assign_one_dataset(out: pd.DataFrame, dataset: str, n_splits: int, random_s
     mask = out["dataset"] == dataset
     if not mask.any():
         return
-    sub = out.loc[mask].reset_index()  # keeps original index in 'index'
-    groups = sub["subject_id"].to_numpy()
-    y = (sub["class_label"] == "parkinson").astype(int).to_numpy()
+    rows = out.loc[mask, ["subject_id", "class_label"]].drop_duplicates()
+    conflicting = rows.groupby("subject_id")["class_label"].nunique()
+    if (conflicting > 1).any():
+        raise ValueError(f"{dataset} has subjects with conflicting class labels")
+    subjects = rows.drop_duplicates("subject_id").reset_index(drop=True)
+    y = (subjects["class_label"] == "parkinson").astype(int).to_numpy()
 
-    try:
-        from sklearn.model_selection import StratifiedGroupKFold
+    from sklearn.model_selection import StratifiedKFold
 
-        splitter = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
-        splits = list(splitter.split(sub, y=y, groups=groups))
-    except (ImportError, TypeError):
-        warnings.warn(
-            "StratifiedGroupKFold unavailable; falling back to GroupKFold (no class stratification)",
-            stacklevel=2,
-        )
-        from sklearn.model_selection import GroupKFold
+    splitter = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+    subject_to_fold: dict[str, int] = {}
+    for fold_idx, (_train_idx, val_idx) in enumerate(splitter.split(subjects, y=y)):
+        for subject_id in subjects.iloc[val_idx]["subject_id"]:
+            subject_to_fold[str(subject_id)] = fold_idx
 
-        splitter = GroupKFold(n_splits=n_splits)
-        splits = list(splitter.split(sub, y=y, groups=groups))
-
-    fold_col = pd.Series(pd.NA, index=sub.index, dtype="Int64")
-    for fold_idx, (_train_idx, val_idx) in enumerate(splits):
-        fold_col.iloc[val_idx] = fold_idx
-
-    out.loc[mask, "cv_fold"] = fold_col.set_axis(sub["index"]).reindex(out.index[mask]).values
+    out.loc[mask, "cv_fold"] = out.loc[mask, "subject_id"].astype(str).map(subject_to_fold).astype("Int64").to_numpy()
 
 
 def assign_subject_folds(

@@ -7,6 +7,8 @@ converges to a complete local result directory without recomputing finished cell
 """
 
 import json
+import platform
+import random
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -129,6 +131,24 @@ def _recipe_kwargs_for_spec(spec: CellSpec) -> dict[str, Any]:
     return kwargs
 
 
+def _configure_reproducibility(seed: int) -> None:
+    """Seed the libraries shared by the paper pipelines."""
+    random.seed(seed)
+    np.random.seed(seed)
+
+    try:
+        import torch
+    except ImportError:
+        return
+
+    torch.manual_seed(seed)
+    torch.use_deterministic_algorithms(True, warn_only=True)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+
+
 def _is_cached(paths: RunPaths, cell_id: str) -> bool:
     pred_path = paths.predictions_dir / f"{cell_id}.parquet"
     if not pred_path.is_file() or not paths.cells_path.is_file():
@@ -189,6 +209,7 @@ def run_cell(spec: CellSpec, paths: RunPaths, *, force: bool = False) -> dict[st
     )
 
     pipeline: Pipeline = get_pipeline(spec.pipeline_name, **spec.pipeline_kwargs)
+    _configure_reproducibility(spec.seed)
 
     with ComputeMonitor() as fit_mon:
         pipeline.fit(train_ds, seed=spec.seed)
@@ -237,6 +258,9 @@ def run_cell(spec: CellSpec, paths: RunPaths, *, force: bool = False) -> dict[st
         "fit_seconds": fit_mon.wall_seconds,
         "predict_seconds": pred_mon.wall_seconds,
         "gpu_peak_mb": fit_mon.gpu_peak_mb,
+        "accelerator_device": getattr(pipeline, "_device", None),
+        "python_version": platform.python_version(),
+        "platform": platform.platform(),
         "infer_latency_ms_per_img": latency,
         "predictions_path": str(pred_path),
     }
