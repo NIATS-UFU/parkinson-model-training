@@ -4,8 +4,10 @@ repos:
   hooks:
     - id: trailing-whitespace
       name: "✂️ whitespace · Remove trailing whitespace"
+      exclude: '\.parquet$'
     - id: end-of-file-fixer
       name: "🔚 eof · Ensure file ends with newline"
+      exclude: '\.parquet$'
     - id: check-yaml
       name: "🔍 yaml · Validate YAML syntax"
     - id: check-json
@@ -20,9 +22,10 @@ repos:
       name: "💻 scripts · Check for shebangs"
     - id: mixed-line-ending
       name: "🔄 line-endings · Fix mixed line endings"
+      exclude: '\.parquet$'
 
 - repo: https://github.com/astral-sh/ruff-pre-commit
-  rev: v0.14.14
+  rev: v0.15.17
   hooks:
     - id: ruff
       args: [--fix, --exit-non-zero-on-fix]

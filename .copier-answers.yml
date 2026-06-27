@@ -8,4 +8,3 @@ package_name: parkinson_model_train
 project_description: Parkinson model train
 python_version: '3.12'
 repo_name: parkinson-model-train
-

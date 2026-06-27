@@ -130,8 +130,8 @@ update_changelog_on_bump = true
 check_consistency = true
 
   [tool.commitizen.change_type_map]
-  feat = "⚡ Feat"
-  fix = "🐞 Fix"
-  perf = "🚀 Performance"
-  refactor = "🛠  Refactor"
-  docs = "📚 Docs"
+  feat = "Feat"
+  fix = "Fix"
+  perf = "Performance"
+  refactor = "Refactor"
+  docs = "Docs"
