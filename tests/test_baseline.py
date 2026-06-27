@@ -1,8 +1,10 @@
 from pathlib import Path
 
-from train_baseline import compute_fold_metrics, compute_roc_auc, stratified_group_k_fold
+import pytest
+from train_baseline import compute_fold_metrics, stratified_group_k_fold
 
 from parkinson_model_train.data import ImageRecord
+from parkinson_model_train.evaluation import compute_roc_auc
 
 
 def test_stratified_group_k_fold_prevents_leakage() -> None:
@@ -13,14 +15,14 @@ def test_stratified_group_k_fold_prevents_leakage() -> None:
         records.append(
             ImageRecord(
                 image_path=Path(f"data/hemato/{p}/{p}_drawings_1/5_final/test3_spi_centered.png"),
-                subject_id=f"{p}_drawings_1",
+                subject_id=p,
                 label="PD",
             )
         )
         records.append(
             ImageRecord(
                 image_path=Path(f"data/hemato/{p}/{p}_drawings_2/5_final/test3_spi_centered.png"),
-                subject_id=f"{p}_drawings_2",
+                subject_id=p,
                 label="PD",
             )
         )
@@ -29,14 +31,14 @@ def test_stratified_group_k_fold_prevents_leakage() -> None:
         records.append(
             ImageRecord(
                 image_path=Path(f"data/hemato/{p}/{p}_drawings_1/5_final/test3_spi_centered.png"),
-                subject_id=f"{p}_drawings_1",
+                subject_id=p,
                 label="HC",
             )
         )
         records.append(
             ImageRecord(
                 image_path=Path(f"data/hemato/{p}/{p}_drawings_2/5_final/test3_spi_centered.png"),
-                subject_id=f"{p}_drawings_2",
+                subject_id=p,
                 label="HC",
             )
         )
@@ -55,8 +57,8 @@ def test_stratified_group_k_fold_prevents_leakage() -> None:
         assert train_paths.isdisjoint(val_paths)
 
         # Ensure no patient leakage
-        train_patients = {r.image_path.parent.parent.parent.name for r in train_records}
-        val_patients = {r.image_path.parent.parent.parent.name for r in val_records}
+        train_patients = {r.subject_id for r in train_records}
+        val_patients = {r.subject_id for r in val_records}
         assert train_patients.isdisjoint(val_patients)
 
         # Every record is accounted for
@@ -96,3 +98,24 @@ def test_compute_fold_metrics() -> None:
     assert metrics["accuracy"] == 0.5
     assert metrics["sensitivity"] == 0.5
     assert metrics["specificity"] == 0.5
+
+
+def test_stratified_group_k_fold_rejects_too_many_folds() -> None:
+    records = [
+        ImageRecord(image_path=Path("pd.png"), subject_id="p1", label="PD"),
+        ImageRecord(image_path=Path("hc.png"), subject_id="h1", label="HC"),
+    ]
+
+    with pytest.raises(ValueError, match="num_folds"):
+        stratified_group_k_fold(records, num_folds=2)
+
+
+def test_stratified_group_k_fold_rejects_unsupported_labels() -> None:
+    records = [
+        ImageRecord(image_path=Path("pd.png"), subject_id="p1", label="PD"),
+        ImageRecord(image_path=Path("hc.png"), subject_id="h1", label="HC"),
+        ImageRecord(image_path=Path("other.png"), subject_id="x1", label="OTHER"),
+    ]
+
+    with pytest.raises(ValueError, match="Unsupported labels"):
+        stratified_group_k_fold(records, num_folds=2)

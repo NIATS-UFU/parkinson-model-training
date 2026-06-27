@@ -1,6 +1,6 @@
-"""Training configuration for Parkinson drawing image models."""
+"""Dataclasses used by the training data pipeline."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -10,11 +10,8 @@ class TrainingConfig:
 
     manifest_path: Path
     output_dir: Path
-    image_size: int = 512
+    image_size: int = 518
     model_name: str = "vit_small_patch14_dinov2"
-    label_column: str = "label"
-    image_column: str = "image_path"
-    subject_column: str = "subject_id"
     batch_size: int = 16
     epochs: int = 10
     learning_rate: float = 1e-3
@@ -91,3 +88,22 @@ class TrainingConfig:
         if self.contrast_jitter < 0:
             msg = "contrast_jitter cannot be negative"
             raise ValueError(msg)
+
+
+@dataclass(frozen=True)
+class ImageRecord:
+    """One labelled image and its subject identifier."""
+
+    image_path: Path
+    subject_id: str
+    label: str
+    metadata: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class DatasetSplit:
+    """Train, validation, and test records split by subject."""
+
+    train: list[ImageRecord]
+    val: list[ImageRecord]
+    test: list[ImageRecord]
