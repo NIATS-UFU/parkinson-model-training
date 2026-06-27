@@ -4,7 +4,7 @@ import pytest
 from PIL import Image
 
 from parkinson_model_train.config import TrainingConfig
-from parkinson_model_train.train import build_image_transforms
+from parkinson_model_train.train import _resolve_device, build_image_transforms
 
 
 def test_build_image_transforms_uses_train_only_augmentation(tmp_path: Path) -> None:
@@ -48,6 +48,10 @@ def test_image_transform_returns_pytorch_tensor(tmp_path: Path) -> None:
     tensor = train_transform(image)
 
     assert tuple(tensor.shape) == (3, 32, 32)
+
+
+def test_resolve_device_accepts_apple_mps() -> None:
+    assert _resolve_device("mps").type == "mps"
 
 
 @pytest.mark.parametrize(

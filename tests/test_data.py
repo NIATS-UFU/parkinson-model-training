@@ -18,6 +18,7 @@ from parkinson_model_train.data import (
     split_by_subject,
     validate_image_paths,
     validate_split_labels,
+    validate_subject_labels,
     write_manifest,
 )
 
@@ -77,6 +78,16 @@ def test_validate_image_paths_reports_missing_files(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="Missing image files"):
         validate_image_paths(records)
+
+
+def test_validate_subject_labels_rejects_conflicts() -> None:
+    records = [
+        ImageRecord(image_path=Path("pd.png"), subject_id="s1", label="PD"),
+        ImageRecord(image_path=Path("hc.png"), subject_id="s1", label="HC"),
+    ]
+
+    with pytest.raises(ValueError, match="s1: HC, PD"):
+        validate_subject_labels(records)
 
 
 def test_split_by_subject_prevents_subject_leakage() -> None:

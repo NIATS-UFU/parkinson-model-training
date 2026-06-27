@@ -328,6 +328,22 @@ def validate_image_paths(records: list[ImageRecord]) -> None:
         raise ValueError(msg)
 
 
+def validate_subject_labels(records: list[ImageRecord]) -> None:
+    """Raise ValueError if one subject is assigned conflicting labels."""
+    labels_by_subject: dict[str, set[str]] = {}
+    for record in records:
+        labels_by_subject.setdefault(record.subject_id, set()).add(record.label)
+
+    conflicts = {subject_id: sorted(labels) for subject_id, labels in labels_by_subject.items() if len(labels) > 1}
+    if conflicts:
+        preview = "; ".join(
+            f"{subject_id}: {', '.join(labels)}" for subject_id, labels in sorted(conflicts.items())[:5]
+        )
+        suffix = "" if len(conflicts) <= 5 else f"; and {len(conflicts) - 5} more"
+        msg = f"Subjects have conflicting labels: {preview}{suffix}"
+        raise ValueError(msg)
+
+
 def _is_image_file(path: Path) -> bool:
     return path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS and not path.name.startswith("._")
 

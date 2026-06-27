@@ -1,6 +1,9 @@
 """Frozen DINO encoder training for Parkinson drawing crops."""
 
+import hashlib
 import json
+import platform
+import random
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -11,6 +14,7 @@ from parkinson_model_train.data import (
     split_by_subject,
     validate_image_paths,
     validate_split_labels,
+    validate_subject_labels,
 )
 
 if TYPE_CHECKING:
@@ -33,6 +37,7 @@ def train_classifier(config: TrainingConfig) -> Path:
         label_column=config.label_column,
     )
     validate_image_paths(records)
+    validate_subject_labels(records)
     label_to_index = labels_to_indices(records)
     split = split_by_subject(
         records,
@@ -43,6 +48,7 @@ def train_classifier(config: TrainingConfig) -> Path:
     validate_split_labels(split)
 
     device = _resolve_device(config.device)
+    generator = _configure_reproducibility(config.seed, device)
     train_transform, eval_transform = build_image_transforms(config)
 
     train_loader = DataLoader(
@@ -50,6 +56,7 @@ def train_classifier(config: TrainingConfig) -> Path:
         batch_size=config.batch_size,
         shuffle=True,
         num_workers=config.num_workers,
+        generator=generator,
     )
     val_loader = DataLoader(
         DrawingDataset(split.val, label_to_index, eval_transform),
@@ -106,7 +113,7 @@ def train_classifier(config: TrainingConfig) -> Path:
     test_metrics = (
         _evaluate(encoder, classifier, test_loader, loss_fn, device) if split.test else {"loss": 0.0, "accuracy": 0.0}
     )
-    _write_run_summary(config.output_dir, label_to_index, split, test_metrics)
+    _write_run_summary(config, label_to_index, split, test_metrics)
     return checkpoint_path
 
 
@@ -225,12 +232,46 @@ def _resolve_device(device: str) -> "torch.device":
     import torch
 
     if device == "auto":
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        if torch.backends.mps.is_available():
+            return torch.device("mps")
+        return torch.device("cpu")
     return torch.device(device)
 
 
-def _write_run_summary(output_dir, label_to_index, split, test_metrics) -> None:
+def _configure_reproducibility(seed: int, device: "torch.device"):
+    """Seed stochastic libraries and return a seeded DataLoader generator."""
+    import torch
+
+    random.seed(seed)
+    torch.manual_seed(seed)
+    torch.use_deterministic_algorithms(True, warn_only=True)
+    if device.type == "cuda":
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+
+    generator = torch.Generator()
+    generator.manual_seed(seed)
+    return generator
+
+
+def _write_run_summary(config, label_to_index, split, test_metrics) -> None:
+    import timm
+    import torch
+    import torchvision
+
     summary = {
+        "config": {key: str(value) if isinstance(value, Path) else value for key, value in config.__dict__.items()},
+        "environment": {
+            "python": platform.python_version(),
+            "platform": platform.platform(),
+            "torch": torch.__version__,
+            "torchvision": torchvision.__version__,
+            "timm": timm.__version__,
+        },
+        "manifest_sha256": hashlib.sha256(config.manifest_path.read_bytes()).hexdigest(),
         "label_to_index": label_to_index,
         "split_counts": {"train": len(split.train), "val": len(split.val), "test": len(split.test)},
         "subject_counts": {
@@ -238,6 +279,14 @@ def _write_run_summary(output_dir, label_to_index, split, test_metrics) -> None:
             "val": len({record.subject_id for record in split.val}),
             "test": len({record.subject_id for record in split.test}),
         },
+        "subjects": {
+            "train": sorted({record.subject_id for record in split.train}),
+            "val": sorted({record.subject_id for record in split.val}),
+            "test": sorted({record.subject_id for record in split.test}),
+        },
         "test_metrics": test_metrics,
     }
-    Path(output_dir, "run_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    Path(config.output_dir, "run_summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
