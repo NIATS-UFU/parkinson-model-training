@@ -49,11 +49,11 @@ uv-sync: check-install-uv $(VIRTUAL_ENV)
 	uv sync --all-groups
 	@echo "✅ Dependencies installed!"
 
-## Remove virtual environment and lockfile
+## Remove the virtual environment while preserving the reproducibility lockfile
 .PHONY: clean
 clean:
-	@echo "Cleaning lockfile and temporary files..."
-	rm -rf .venv $(LOCKFILE)
+	@echo "Cleaning virtual environment and temporary files..."
+	rm -rf .venv
 	@echo "✅ Cleanup complete!"
 
 ###########################
@@ -75,21 +75,21 @@ test: install pytest paper-reproduction-test
 .PHONY: pytest
 pytest:
 	@echo "Running tests with coverage..."
-	uv run --all-groups pytest --cov=$(REPO_NAME) --cov-config=pyproject.toml --cov-report=term-missing tests
+	uv run --all-groups python -m pytest --cov=$(REPO_NAME) --cov-config=pyproject.toml --cov-report=term-missing tests
 	@echo "✅ Tests completed!"
 
 ## Run paper reproduction package tests in its own environment
 .PHONY: paper-reproduction-test
 paper-reproduction-test:
 	@echo "Running paper reproduction tests..."
-	uv run --project paper_reproduction --with pytest pytest paper_reproduction/tests
+	uv run --project paper_reproduction --with pytest python -m pytest paper_reproduction/tests
 	@echo "✅ Paper reproduction tests completed!"
 
 ## Run pytest with verbose output
 .PHONY: pytest-loud
 pytest-loud:
 	@echo "Running tests in verbose mode..."
-	uv run --all-groups pytest -s --cov=$(REPO_NAME) --cov-report=term-missing tests
+	uv run --all-groups python -m pytest -s --cov=$(REPO_NAME) --cov-report=term-missing tests
 	@echo "✅ Verbose tests completed!"
 
 ## Format code with ruff

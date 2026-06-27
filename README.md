@@ -2,12 +2,11 @@
 
 [![on-merge](https://github.com/NIATS-UFU/parkinson-model-train/actions/workflows/on_merge.yaml/badge.svg)](https://github.com/NIATS-UFU/parkinson-model-train/actions/workflows/on_merge.yaml)
 [![ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
-![Python](https://img.shields.io/badge/python-3.12%2B-blue.svg)
+![Python](https://img.shields.io/badge/python-3.13-blue.svg)
 
 Training repo for the NIATS Parkinson drawing baseline: 512x512 spiral/wave crops from [`spiral-cropper`](https://github.com/NIATS-UFU/spiral-cropper) go into a frozen DINO/DINOv2 encoder, then a supervised linear classifier is trained with subject-level splits.
 
 - **Repository:** <https://github.com/NIATS-UFU/parkinson-model-train>
-- **Local path:** `/data/git/ufu/parkinson_model_training`
 - **CLI entry point:** `main-cli`
 - **Main assumption:** split by subject, not by image, to avoid leakage.
 
@@ -25,7 +24,11 @@ Training repo for the NIATS Parkinson drawing baseline: 512x512 spiral/wave crop
 make install
 ```
 
-This installs the Python package and development dependencies with `uv`. The project currently uses PyTorch CUDA 12.6 wheels on Linux.
+This installs the Python package and development dependencies with `uv`. The
+project currently uses Python 3.13 and PyTorch CUDA 12.6 wheels on Linux.
+The committed `uv.lock` is the source of truth for the root environment; the
+paper reproduction package has its own committed lockfile and Python 3.13
+environment.
 
 ## Manifest
 
@@ -67,7 +70,8 @@ Useful options:
 
 - `--model-name`: any compatible `timm` model; default is `vit_small_patch14_dinov2`
 - `--image-size`: input resize size; default is `512`
-- `--device`: `auto`, `cpu`, `cuda`, or a Torch device string
+- `--device`: `auto`, `cpu`, `cuda`, `mps`, or a Torch device string. On Apple
+  Silicon, `auto` selects Metal Performance Shaders (MPS) when available.
 - `--learning-rate`: AdamW learning rate for the classifier head
 - `--val-fraction`, `--test-fraction`, `--seed`: subject-level split controls
 - `--num-workers`: PyTorch DataLoader worker count

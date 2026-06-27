@@ -139,7 +139,11 @@ dmypy.json
 .prof
 
 # uv
-uv.lock
+!uv.lock
+!paper_reproduction/uv.lock
+
+# macOS
+.DS_Store
 
 # vscode
 .vscode/
