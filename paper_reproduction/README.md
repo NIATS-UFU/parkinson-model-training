@@ -19,26 +19,52 @@ pipelines across three datasets in a full train × test factorial:
 
 - `src/parkinson_spiral/` — the installable package: experiment protocol, the four
   pipelines, augmentation recipes, metrics, and the cross-dataset analysis.
-- `results/` — the curated **97-cell** result set (predictions + cell index) that
-  backs every table and figure. **No images** are shipped.
+- `results/` — local generated outputs: manifests, cell index files, and
+  predictions from re-running experiments. Result parquet files are not shipped.
 - `scripts/` — Layer-1 regeneration and Layer-2 re-training entry points.
 - `notebooks/reproduce_experiments.ipynb` — the one notebook that runs everything,
   in the paper's naming.
 - `models/` — tooling to export and use the released DINOv2 + Hemato probe.
+- `requirements-lock.txt` — fully pinned transitive dependency lock for exact
+  Python 3.13 reproduction environments.
 - `docs/` — [`REPRODUCE.md`](docs/REPRODUCE.md), [`DATA.md`](docs/DATA.md),
-  [`PROVENANCE.md`](docs/PROVENANCE.md).
+  [`PROVENANCE.md`](docs/PROVENANCE.md), and review
+  [`DECISIONS.md`](docs/DECISIONS.md).
 
-## Quickstart — regenerate the paper's tables and figures (no data, no GPU)
+## Project structure
+
+The reproduction package intentionally mirrors the main repository layout:
+
+```text
+paper_reproduction/
+├── src/parkinson_spiral/
+│   ├── protocol.py        # CellSpec + Pipeline contracts
+│   ├── catalog.py         # declarative experiment catalog
+│   ├── runner.py          # split resolution + idempotent cell execution
+│   ├── data/              # dataset-specific manifest builders
+│   ├── pipelines/         # one module per model family
+│   └── recipes/           # one module per augmentation strategy
+├── tests/                 # unit and integration checks
+├── scripts/               # command-line reproduction entry points
+├── docs/                  # data, provenance, and reproduction notes
+└── models/                # optional released-model export/inference tooling
+```
+
+To add an experiment, define a `CellSpec` in `catalog.py`. To add a model, create a
+module under `pipelines/` and register it in `pipelines/__init__.py`. To add an
+augmentation strategy, create a module under `recipes/` and register it in
+`recipes/__init__.py`.
+
+## Quickstart — inspect the experiment catalog (no data, no GPU)
 
 ```bash
 pip install -e .
-python scripts/regenerate.py        # -> paper_artifacts/  (seconds)
+python scripts/paper.py reproduce --dry-run
 ```
 
-This is the headline reproducibility claim: every table and figure is rebuilt from
-the shipped predictions, with no datasets, no GPU, and no training. Open
-`notebooks/reproduce_experiments.ipynb` to do the same interactively and see each
-table inline.
+The dry run lists the paper's 97 experiment cells without requiring datasets,
+training, or a GPU. Tables and figures can be regenerated after producing a local
+`results/` directory with `cells.parquet` and `predictions/`.
 
 ## Re-train from scratch (optional)
 
@@ -47,13 +73,14 @@ need a GPU (see [`docs/REPRODUCE.md`](docs/REPRODUCE.md)).
 
 ```bash
 pip install -e ".[train]"
-python scripts/build_manifest.py --data-root <path> --out results/manifest.parquet
-python scripts/reproduce.py --manifest results/manifest.parquet --out runs/fresh
-python scripts/verify_catalog.py
+python scripts/paper.py build-manifest --data-root <path> --out results/manifest.parquet
+python scripts/paper.py reproduce --manifest results/manifest.parquet --out results
+python scripts/paper.py verify-catalog --results results
+python scripts/paper.py regenerate --results results
 ```
 
 Re-training is idempotent (keyed by `cell_id`): interrupted runs resume, and
-pointing it at the shipped `results/` is a no-op.
+existing local predictions are skipped unless `--force` is passed.
 
 ## The released model
 

@@ -12,6 +12,7 @@ from parkinson_model_train.data import (
     load_manifest,
     split_by_subject,
     validate_image_paths,
+    validate_subject_labels,
     write_manifest,
 )
 from parkinson_model_train.data.datasets import DATASET_LOADERS
@@ -22,13 +23,12 @@ app = typer.Typer(help="Train frozen DINO classifiers for Parkinson drawing crop
 
 @app.command()
 def validate_manifest(
-    manifest: Annotated[
-        Path, typer.Argument(help="CSV manifest with image_path, subject_id, and label columns.")
-    ],
+    manifest: Annotated[Path, typer.Argument(help="CSV manifest with image_path, subject_id, and label columns.")],
     check_files: Annotated[bool, typer.Option(help="Verify that all image paths exist.")] = True,
 ) -> None:
     """Validate the input manifest and print its class/subject summary."""
     records = load_manifest(manifest)
+    validate_subject_labels(records)
     if check_files:
         validate_image_paths(records)
     labels = labels_to_indices(records)
@@ -39,9 +39,7 @@ def validate_manifest(
 
 @app.command()
 def split_summary(
-    manifest: Annotated[
-        Path, typer.Argument(help="CSV manifest with image_path, subject_id, and label columns.")
-    ],
+    manifest: Annotated[Path, typer.Argument(help="CSV manifest with image_path, subject_id, and label columns.")],
     val_fraction: Annotated[float, typer.Option(help="Subject fraction for validation.")] = 0.15,
     test_fraction: Annotated[float, typer.Option(help="Subject fraction for testing.")] = 0.15,
     seed: Annotated[int, typer.Option(help="Random seed for subject split.")] = 42,
@@ -70,9 +68,7 @@ def create_manifest(
 
 @app.command()
 def train(
-    manifest: Annotated[
-        Path, typer.Argument(help="CSV manifest with image_path, subject_id, and label columns.")
-    ],
+    manifest: Annotated[Path, typer.Argument(help="CSV manifest with image_path, subject_id, and label columns.")],
     output_dir: Annotated[Path, typer.Argument(help="Directory for checkpoints and run summaries.")],
     epochs: Annotated[int, typer.Option(help="Number of classifier training epochs.")] = 10,
     batch_size: Annotated[int, typer.Option(help="Training batch size.")] = 16,
@@ -84,7 +80,7 @@ def train(
     num_workers: Annotated[int, typer.Option(help="PyTorch DataLoader worker count.")] = 4,
     model_name: Annotated[str, typer.Option(help="timm DINO/DINOv2 model name.")] = "vit_small_patch14_dinov2",
     image_size: Annotated[int, typer.Option(help="Image size used by transforms.")] = 518,
-    device: Annotated[str, typer.Option(help="auto, cpu, cuda, or a torch device string.")] = "auto",
+    device: Annotated[str, typer.Option(help="auto, cpu, cuda, mps, or a torch device string.")] = "auto",
     augment: Annotated[bool, typer.Option(help="Apply train-only image augmentation.")] = True,
     rotation_degrees: Annotated[float, typer.Option(help="Maximum random train rotation in degrees.")] = 10.0,
     crop_scale_min: Annotated[float, typer.Option(help="Minimum random crop area fraction.")] = 0.9,

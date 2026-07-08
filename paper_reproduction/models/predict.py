@@ -9,8 +9,6 @@ Usage:
   python models/predict.py --model-dir models/exported --images one_spiral.png
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import sys

@@ -5,13 +5,12 @@ Expected layout (place the public dataset under <data_root>/kaggle/):
     <data_root>/kaggle/{spiral,wave}/{training,testing}/{healthy,parkinson}/*.png
 
 Subject ID convention:
-    Filename pattern `V<NN><P|H>E<NN>.png`. The same V-number appears in BOTH
+    Filename pattern `V<NN><P|H><E|O><NN>.png`, where E denotes spiral
+    (espiral) and O denotes wave (onda). The same V-number appears in BOTH
     healthy/ and parkinson/ folders but refers to different individuals
     (class-local indexing). To make subject-level grouping safe, we fold the
     class letter into subject_id: `kaggle:V01H` vs `kaggle:V01P`.
 """
-
-from __future__ import annotations
 
 import re
 from pathlib import Path
@@ -20,8 +19,10 @@ import pandas as pd
 
 from .unified import MANIFEST_COLUMNS, make_image_id
 
-# V<NN>[P|H]E<NN>.png — class letter is the discriminator
-_FNAME_RE = re.compile(r"^(V\d+)([PH])E\d+\.png$", re.IGNORECASE)
+# V<NN>[P|H][E|O]<NN>.png — class letter identifies the participant and the
+# E/O letter identifies the drawing task. Both modalities must map to the same
+# participant before subject-grouped folds are assigned.
+_FNAME_RE = re.compile(r"^(V\d+)([PH])[EO]\d+\.(?:png|jpe?g)$", re.IGNORECASE)
 
 
 def _subject_id(stem_with_ext: str, class_label: str) -> str:
@@ -37,6 +38,8 @@ def build_kaggle_manifest(data_root: Path) -> pd.DataFrame:
     data_root = Path(data_root)
     rows: list[dict] = []
     kaggle_root = data_root / "kaggle"
+    if not (kaggle_root / "spiral").is_dir() and (kaggle_root / "drawings").is_dir():
+        kaggle_root /= "drawings"
     for drawing_type in ("spiral", "wave"):
         for split_folder, split_label in (("training", "train"), ("testing", "test")):
             for label_folder, label in (("healthy", "healthy"), ("parkinson", "parkinson")):

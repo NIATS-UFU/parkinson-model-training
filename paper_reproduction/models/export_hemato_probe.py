@@ -23,8 +23,6 @@ Usage:
   python models/export_hemato_probe.py --manifest results/manifest.parquet
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import sys
@@ -91,7 +89,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--data-root", type=Path, help="dir holding hemato/ (manifest built on the fly)")
-    g.add_argument("--manifest", type=Path, help="prebuilt manifest parquet (scripts/build_manifest.py)")
+    g.add_argument("--manifest", type=Path, help="prebuilt manifest parquet (scripts/paper.py build-manifest)")
     ap.add_argument("--out", type=Path, default=REPO / "models" / "exported")
     ap.add_argument("--skip-sanity", action="store_true", help="skip the 5-fold OOF reproduction check")
     args = ap.parse_args()

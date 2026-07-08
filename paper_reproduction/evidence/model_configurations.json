@@ -1,0 +1,52 @@
+{
+  "dinov2_probe": {
+    "free_hyperparameters": [
+      "vit_size",
+      "probe_C",
+      "image_size"
+    ],
+    "methods_notes": "DINOv2 (Oquab et al., 2023) is used as a frozen feature extractor. We use the vitb14 variant (86M parameters, 768-d CLS token) downloaded from the facebookresearch/dinov2 hub. No fine-tuning or LoRA is applied. The probe is a scikit-learn LogisticRegression with default C=1.0 and max_iter=2000. The choice of frozen + linear probe is deliberate: it minimises the free-hyperparameter surface against which a clinical practitioner would need to tune, which is the core of our H4 reproducibility-cost argument. If vitb14 exceeds available GPU memory, the harness falls back to vits14 (22M params, 384-d CLS token) and the size-vs-accuracy trade-off is reported."
+  },
+  "dogan_triple": {
+    "free_hyperparameters": [
+      "fine_tune",
+      "lr",
+      "batch_size",
+      "epochs",
+      "image_size",
+      "ncomponents_pct",
+      "svm_kernel",
+      "svm_C",
+      "rotation_set",
+      "color_jitter_params",
+      "augment_then_split"
+    ],
+    "methods_notes": "Dogan et al. (2024) hybrid pipeline reproduced faithfully across two ML frameworks. Three ImageNet-pretrained CNNs - DenseNet201 (torchvision), Xception (timm) and NASNetMobile (tf.keras.applications) - are used as feature extractors after global average pooling. The paper catalog uses all three as frozen public feature extractors because TensorFlow 2.21 exposes no Apple Metal device for literal NASNetMobile fine-tuning. Optional fine-tuning is available for DenseNet201 and Xception only, so either mode is a bounded reproduction rather than literal three-backbone fine-tuning. The three GAP feature vectors (1920 + 2048 + 1056 = 5024-d) are concatenated, passed through NeighborhoodComponentsAnalysis retaining 17% of the dimensionality (Dogan section 5), and classified with a linear SVM (Dogan did not specify the kernel; we use linear because of the high-dimensional concatenated features). Augmentation is applied after the released or grouped split; the source paper's augmentation-before-split result is treated as an unverified upper bound because its split is not published."
+  },
+  "folador_hog": {
+    "free_hyperparameters": [
+      "classifier",
+      "hog_orientations",
+      "hog_pixels_per_cell",
+      "hog_cells_per_block"
+    ],
+    "methods_notes": "Folador et al. (2021) pipeline: HOG features (orientations=9, pixels_per_cell=(16,16), cells_per_block=(2,2), transform_sqrt=True, block_norm='L1') applied to grayscale 256x256 spirals (the resize size that yields Folador's published 8100-element feature vector), fed into one of four classifiers with Folador's published hyperparameters: RFC(n_estimators=500), KNN(n_neighbors=7, p=1, weights='distance'), SVM(kernel='linear'), or a 1D-CNN. The paper reports the SVM_linear head. The 1D-CNN is kept in Keras for faithful reproduction."
+  },
+  "huang_vgg19": {
+    "free_hyperparameters": [
+      "lr",
+      "batch_size",
+      "epochs",
+      "scheduler",
+      "T_0",
+      "T_mult",
+      "eta_min",
+      "rotation_degrees",
+      "image_size",
+      "norm_mean",
+      "norm_std",
+      "freezing_layers"
+    ],
+    "methods_notes": "Huang et al. (2024) VGG19 recipe: ImageNet-pretrained VGG19 with the classifier head replaced by a 2-class linear layer. Trained with Adam(lr=1e-4), batch=32, 50 epochs, CrossEntropyLoss, and CosineAnnealingWarmRestarts. Huang did not specify T_0, T_mult, eta_min \u2014 we default to PyTorch defaults (T_0=10, T_mult=2, eta_min=1e-6) and document. Normalization uses Huang's published mean=0.5/std=0.5 per channel (non-standard for ImageNet-pretrained VGG19, but kept faithful for the reproduction)."
+  }
+}

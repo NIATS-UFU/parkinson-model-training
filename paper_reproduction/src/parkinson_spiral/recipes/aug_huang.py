@@ -12,8 +12,6 @@ Verbatim spec + our documented defaults:
 | Normalize        | mean=0.5/std=0.5 per channel       | mean=0.5/std=0.5 (faithful)    |
 """
 
-from __future__ import annotations
-
 import torch
 from PIL import Image
 from torchvision import transforms

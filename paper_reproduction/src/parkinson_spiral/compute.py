@@ -4,8 +4,6 @@ Used as a context manager around `pipeline.fit` and `pipeline.predict_proba`
 inside `runner.run_cell`. Falls back to None values when CUDA is unavailable.
 """
 
-from __future__ import annotations
-
 import time
 
 
@@ -14,7 +12,7 @@ class ComputeMonitor:
         self.wall_seconds: float | None = None
         self.gpu_peak_mb: float | None = None
 
-    def __enter__(self) -> ComputeMonitor:
+    def __enter__(self) -> "ComputeMonitor":
         try:
             import torch
 

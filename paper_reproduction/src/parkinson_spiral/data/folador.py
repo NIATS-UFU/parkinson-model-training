@@ -13,8 +13,6 @@ Subject ID convention:
     filename prefix and cross-checked against the folder name (higido/parkinson).
 """
 
-from __future__ import annotations
-
 import re
 from pathlib import Path
 

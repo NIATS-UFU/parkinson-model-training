@@ -10,6 +10,7 @@ from parkinson_model_train.data.data_utils import (
     split_by_subject,
     validate_image_paths,
     validate_split_labels,
+    validate_subject_labels,
     write_manifest,
 )
 
@@ -23,5 +24,6 @@ __all__ = [
     "split_by_subject",
     "validate_image_paths",
     "validate_split_labels",
+    "validate_subject_labels",
     "write_manifest",
 ]

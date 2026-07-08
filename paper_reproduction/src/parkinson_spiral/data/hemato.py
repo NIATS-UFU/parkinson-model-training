@@ -19,8 +19,6 @@ Drawing type: row_type == "spi" → spiral, row_type == "sen" → wave.
 Session ID: the leaf folder name (enables per-session aggregation).
 """
 
-from __future__ import annotations
-
 import re
 from pathlib import Path
 
@@ -76,6 +74,8 @@ def build_hemato_manifest(data_root: Path) -> pd.DataFrame:
             abs_path = reconstructed.resolve()
         else:
             abs_path = (output_root / recorded).resolve()
+        if not abs_path.is_file():
+            continue
         manifest_rel = abs_path.relative_to(data_root.resolve()).as_posix()
         rows.append({
             "image_id": make_image_id("hemato", manifest_rel),

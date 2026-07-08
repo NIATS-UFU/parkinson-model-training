@@ -11,6 +11,7 @@ from parkinson_model_train.data import (
     split_by_subject,
     validate_image_paths,
     validate_split_labels,
+    validate_subject_labels,
     write_manifest,
 )
 from parkinson_model_train.data.datasets import load_hemato_records, load_image_tree_records, load_niats_folador_records
@@ -92,6 +93,16 @@ def test_validate_image_paths_reports_missing_files(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="Missing image files"):
         validate_image_paths(records)
+
+
+def test_validate_subject_labels_rejects_conflicts() -> None:
+    records = [
+        ImageRecord(image_path=Path("pd.png"), subject_id="s1", label="PD"),
+        ImageRecord(image_path=Path("hc.png"), subject_id="s1", label="HC"),
+    ]
+
+    with pytest.raises(ValueError, match=r"s1: \['HC', 'PD'\]"):
+        validate_subject_labels(records)
 
 
 def test_split_by_subject_prevents_subject_leakage() -> None:
@@ -229,22 +240,8 @@ def test_load_image_tree_records_reads_generic_labelled_folders(tmp_path: Path) 
 
 
 def test_load_niats_folador_records_reads_dataset_junto_layout(tmp_path: Path) -> None:
-    patient_image = (
-        tmp_path
-        / "dataset-junto"
-        / "espiral"
-        / "treinamento"
-        / "parkinson"
-        / "1_2_PE3.jpg"
-    )
-    control_image = (
-        tmp_path
-        / "dataset-junto"
-        / "ondas"
-        / "teste"
-        / "higido"
-        / "2_5_HO1.jpg"
-    )
+    patient_image = tmp_path / "dataset-junto" / "espiral" / "treinamento" / "parkinson" / "1_2_PE3.jpg"
+    control_image = tmp_path / "dataset-junto" / "ondas" / "teste" / "higido" / "2_5_HO1.jpg"
     patient_image.parent.mkdir(parents=True)
     control_image.parent.mkdir(parents=True)
     patient_image.write_bytes(b"fake")
@@ -261,15 +258,7 @@ def test_load_niats_folador_records_reads_dataset_junto_layout(tmp_path: Path) -
 
 
 def test_load_niats_folador_records_reads_dataset_separado_layout(tmp_path: Path) -> None:
-    image_path = (
-        tmp_path
-        / "dataset-separado"
-        / "dia2"
-        / "espiral"
-        / "teste"
-        / "parkinson"
-        / "2_11_PE4.jpg"
-    )
+    image_path = tmp_path / "dataset-separado" / "dia2" / "espiral" / "teste" / "parkinson" / "2_11_PE4.jpg"
     image_path.parent.mkdir(parents=True)
     image_path.write_bytes(b"fake")
 

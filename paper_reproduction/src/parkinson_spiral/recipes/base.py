@@ -5,8 +5,6 @@ never has to know which paper the recipe came from. New recipes plug in by
 subclassing `Recipe` and registering in `recipes/__init__.py`.
 """
 
-from __future__ import annotations
-
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 

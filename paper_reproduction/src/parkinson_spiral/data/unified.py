@@ -6,8 +6,6 @@ in `dataset.PreprocessedSpiralDataset`.
 Dataset names follow the paper: kaggle, folador (Folador et al. 2021), hemato.
 """
 
-from __future__ import annotations
-
 import hashlib
 from pathlib import Path
 
@@ -76,6 +74,30 @@ def enforce_schema(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def deduplicate_exact_images(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop byte-identical repeated files after validating their metadata.
+
+    Exact copies add no independent information and otherwise overweight subjects
+    with duplicated session folders. Copies with conflicting identity or labels
+    are rejected instead of silently merged.
+    """
+    hashes = []
+    for file_path in df["file_path"].astype(str):
+        digest = hashlib.sha256()
+        with Path(file_path).open("rb") as file:
+            for chunk in iter(lambda: file.read(1024 * 1024), b""):
+                digest.update(chunk)
+        hashes.append(digest.hexdigest())
+
+    out = df.assign(_content_sha256=hashes)
+    identity_columns = ["dataset", "subject_id", "drawing_type", "class_label"]
+    conflicting = out.groupby("_content_sha256")[identity_columns].nunique()
+    if (conflicting > 1).any(axis=None):
+        bad_hashes = conflicting[(conflicting > 1).any(axis=1)].index.tolist()
+        raise ValueError(f"byte-identical images have conflicting metadata: {bad_hashes[:3]}")
+    return out.drop_duplicates("_content_sha256", keep="first").drop(columns="_content_sha256").reset_index(drop=True)
+
+
 def build_unified_manifest(data_root: Path) -> pd.DataFrame:
     """Concatenate per-dataset manifests; downstream callers add cv_fold."""
     from .folador import build_folador_manifest
@@ -87,5 +109,5 @@ def build_unified_manifest(data_root: Path) -> pd.DataFrame:
         build_folador_manifest(data_root),
         build_hemato_manifest(data_root),
     ]
-    df = pd.concat(parts, ignore_index=True)
+    df = deduplicate_exact_images(pd.concat(parts, ignore_index=True))
     return enforce_schema(df)

@@ -1,0 +1,44 @@
+{
+  "accelerator": {
+    "cuda_available": false,
+    "mps_available": true,
+    "mps_built": true,
+    "torch_available": true
+  },
+  "catalog_cells": 97,
+  "git_branch": "cleanup-open-source-pr1",
+  "git_commit": "826a843906283913e2cc02b012c1e519231bb7ba",
+  "git_status": "M .gitignore\n M Makefile\n M README.md\n M docker/Dockerfile\n M paper_reproduction/docs/DECISIONS.md\n M paper_reproduction/docs/REPRODUCE.md\n M paper_reproduction/scripts/paper.py\n M paper_reproduction/src/parkinson_spiral/catalog.py\n M paper_reproduction/src/parkinson_spiral/data/__init__.py\n M paper_reproduction/src/parkinson_spiral/data/hemato.py\n M paper_reproduction/src/parkinson_spiral/data/kaggle.py\n M paper_reproduction/src/parkinson_spiral/data/splits.py\n M paper_reproduction/src/parkinson_spiral/data/unified.py\n M paper_reproduction/src/parkinson_spiral/pipelines/__init__.py\n M paper_reproduction/src/parkinson_spiral/pipelines/dinov2_probe.py\n M paper_reproduction/src/parkinson_spiral/pipelines/dogan_triple.py\n M paper_reproduction/src/parkinson_spiral/pipelines/folador_hog.py\n M paper_reproduction/src/parkinson_spiral/pipelines/huang_vgg19.py\n M paper_reproduction/src/parkinson_spiral/runner.py\n M paper_reproduction/tests/test_analysis.py\n M paper_reproduction/tests/test_catalog.py\n M paper_reproduction/tests/test_protocol.py\n M src/parkinson_model_train/data.py\n M src/parkinson_model_train/main.py\n M src/parkinson_model_train/train.py\n M tests/test_data.py\n M tests/test_train.py\n?? AGENTS.md\n?? paper_reproduction/evidence/\n?? paper_reproduction/uv.lock\n?? uv.lock",
+  "hardware_profile": {
+    "Chip": "Apple M4 Pro",
+    "Memory": "48 GB",
+    "Model Identifier": "Mac16,8",
+    "Model Name": "MacBook Pro",
+    "Total Number of Cores": "12 (8 Performance and 4 Efficiency)"
+  },
+  "machine": "arm64",
+  "manifest_rows": 8158,
+  "manifest_sha256": "ab97fe7c8b3ac71e34cb8c3837b7cacaf90b512b9744097ebdbba0a1e51aa63e",
+  "packages": {
+    "numpy": "2.4.6",
+    "pandas": "3.0.3",
+    "pillow": "12.2.0",
+    "pyarrow": "24.0.0",
+    "scikit-image": "0.26.0",
+    "scikit-learn": "1.9.0",
+    "tensorflow": "2.21.0",
+    "timm": "1.0.22",
+    "torch": "2.9.1",
+    "torchvision": "0.24.1"
+  },
+  "platform": "macOS-26.5.1-arm64-arm-64bit-Mach-O",
+  "python": "3.13.13",
+  "run_device_policy": {
+    "dinov2_probe": "PyTorch MPS",
+    "dogan_triple_nasnetmobile": "TensorFlow CPU",
+    "dogan_triple_torch": "PyTorch MPS",
+    "folador_hog": "CPU",
+    "huang_vgg19": "PyTorch MPS, full precision"
+  },
+  "tensorflow_devices": "[PhysicalDevice(name='/physical_device:CPU:0', device_type='CPU')]"
+}

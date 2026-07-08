@@ -97,6 +97,18 @@ def validate_image_paths(records: list[ImageRecord]) -> None:
         raise ValueError(msg)
 
 
+def validate_subject_labels(records: list[ImageRecord]) -> None:
+    """Raise ValueError if any subject has images with conflicting labels."""
+    conflicts: dict[str, set[str]] = {}
+    for record in records:
+        conflicts.setdefault(record.subject_id, set()).add(record.label)
+    bad = {sid: labels for sid, labels in conflicts.items() if len(labels) > 1}
+    if bad:
+        details = "; ".join(f"{sid}: {sorted(labels)}" for sid, labels in sorted(bad.items()))
+        msg = f"Subjects with conflicting labels: {details}"
+        raise ValueError(msg)
+
+
 def _is_image_file(path: Path) -> bool:
     return path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS and not path.name.startswith("._")
 
@@ -115,9 +127,7 @@ def _record_from_manifest_row(row: dict[str, str | None], manifest_path: Path) -
         image_path = (manifest_path.parent / image_path).resolve()
 
     metadata = {
-        str(key): str(value)
-        for key, value in row.items()
-        if key not in MANIFEST_FIELDS and value not in {None, ""}
+        str(key): str(value) for key, value in row.items() if key not in MANIFEST_FIELDS and value not in {None, ""}
     }
     return ImageRecord(
         image_path=image_path,

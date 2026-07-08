@@ -9,8 +9,6 @@ Usage:
   python models/push_to_hf.py --repo-id <org/name> --model-dir models/exported --private
 """
 
-from __future__ import annotations
-
 import argparse
 import sys
 from pathlib import Path

@@ -292,7 +292,11 @@ def _evaluate(encoder, classifier, data_loader, loss_fn, device, label_to_index)
 
 def _resolve_device(device: str) -> torch.device:
     if device == "auto":
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        if torch.backends.mps.is_available():
+            return torch.device("mps")
+        return torch.device("cpu")
     return torch.device(device)
 
 
@@ -301,6 +305,8 @@ def _seed_training(seed: int) -> None:
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+    elif torch.backends.mps.is_available():
+        torch.mps.manual_seed(seed)
 
 
 def _torch_generator(seed: int) -> torch.Generator:

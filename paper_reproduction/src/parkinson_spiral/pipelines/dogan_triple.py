@@ -6,13 +6,12 @@ tf.keras.applications (the only place it ships) and its 1056-d GAP features are
 concatenated in numpy.
 
 Two fine-tune modes:
-- fine_tune=True (faithful): Adam(default lr=1e-3), 20 epochs per backbone, batch=32.
-  Fine-tunes only the PyTorch backbones; Keras NASNetMobile stays frozen (recorded
-  in METHODS_SECTION_NOTES).
-- fine_tune=False: all three backbones frozen, ImageNet weights only.
+- fine_tune=False (paper catalog): all three public ImageNet backbones are frozen.
+  This bounded M4 reproduction is explicit because TensorFlow 2.21 exposes no
+  Apple Metal device for literal NASNetMobile fine-tuning.
+- fine_tune=True (optional): Adam(default lr=1e-3), 20 epochs per PyTorch
+  backbone, batch=32; NASNetMobile still remains frozen.
 """
-
-from __future__ import annotations
 
 from typing import ClassVar
 
@@ -21,6 +20,7 @@ from sklearn.neighbors import NeighborhoodComponentsAnalysis
 from sklearn.svm import SVC
 
 from ..protocol import Pipeline
+from .folador_hog import _stable_sigmoid
 
 FINE_TUNE_EPOCHS = 20
 FINE_TUNE_LR = 1e-3  # Dogan didn't state - Adam default
@@ -48,15 +48,21 @@ class DoganTriple(Pipeline):
         "Dogan et al. (2024) hybrid pipeline reproduced faithfully across two ML frameworks. "
         "Three ImageNet-pretrained CNNs - DenseNet201 (torchvision), Xception (timm) and "
         "NASNetMobile (tf.keras.applications) - are used as feature extractors after global "
-        "average pooling. We support two modes: faithful fine-tuning (Adam, 20 epochs, "
-        "batch=32, default lr=1e-3) of the PyTorch backbones (Keras NASNetMobile stays "
-        "frozen), and a frozen-features fallback for compute-constrained settings. The three "
+        "average pooling. The paper catalog uses all three as frozen public feature "
+        "extractors because TensorFlow 2.21 exposes no Apple Metal device for literal "
+        "NASNetMobile fine-tuning. Optional fine-tuning is available for DenseNet201 and "
+        "Xception only, so either mode is a bounded reproduction rather than literal "
+        "three-backbone fine-tuning. The three "
         "GAP feature vectors (1920 + 2048 + 1056 = 5024-d) are concatenated, passed through "
         "NeighborhoodComponentsAnalysis retaining 17% of the dimensionality (Dogan section 5), "
         "and classified with a linear SVM (Dogan did not specify the kernel; we use linear "
-        "because of the high-dimensional concatenated features). When augment_then_split=True, "
-        "the dataset emits 8 deterministic rotation/flip copies per source image."
+        "because of the high-dimensional concatenated features). Augmentation is applied "
+        "after the released or grouped split; the source paper's augmentation-before-split "
+        "result is treated as an unverified upper bound because its split is not published."
     )
+    _BACKBONE_CACHE: ClassVar[dict[str, tuple[list, object, object]]] = {}
+    _FEATURE_CACHE: ClassVar[dict[tuple, tuple[np.ndarray, np.ndarray]]] = {}
+    _FIT_CACHE: ClassVar[dict[tuple, tuple[NeighborhoodComponentsAnalysis, SVC]]] = {}
 
     def __init__(
         self,
@@ -82,19 +88,27 @@ class DoganTriple(Pipeline):
         self._svm: SVC | None = None
         self._device = None
         self._use_amp = False
+        self._seed = 0
 
     def _build_backbones(self):
         import timm
         import torch
         from torchvision.models import DenseNet201_Weights, densenet201
 
+        from . import accelerator_device
+
+        self._device = accelerator_device()
+        self._use_amp = self._device == "cuda"
+        if not self.fine_tune and self._device in self._BACKBONE_CACHE:
+            cached_torch, cached_nasnet, cached_preprocess = self._BACKBONE_CACHE[self._device]
+            self._torch_backbones = cached_torch
+            self._keras_nasnet = cached_nasnet
+            self._keras_preprocess = cached_preprocess
+            return
+
         dn = densenet201(weights=DenseNet201_Weights.IMAGENET1K_V1)
         dn.classifier = torch.nn.Identity()  # gives GAP'd features
-
         xc = timm.create_model("xception", pretrained=True, num_classes=0, global_pool="avg")
-
-        self._device = "cuda" if torch.cuda.is_available() else "cpu"
-        self._use_amp = self._device == "cuda"
         self._torch_backbones = [m.eval().to(self._device) for m in (dn, xc)]
         if not self.fine_tune:
             for m in self._torch_backbones:
@@ -112,6 +126,12 @@ class DoganTriple(Pipeline):
         )
         self._keras_nasnet.trainable = False  # frozen; see METHODS_SECTION_NOTES
         self._keras_preprocess = preprocess_input
+        if not self.fine_tune:
+            self._BACKBONE_CACHE[self._device] = (
+                self._torch_backbones,
+                self._keras_nasnet,
+                self._keras_preprocess,
+            )
 
     def _fine_tune_torch_backbones(self, dataset, seed: int):
         import torch
@@ -119,7 +139,7 @@ class DoganTriple(Pipeline):
         from tqdm.auto import tqdm
 
         loss_fn = torch.nn.CrossEntropyLoss()
-        scaler = torch.cuda.amp.GradScaler(enabled=self._use_amp)
+        scaler = torch.amp.GradScaler("cuda", enabled=self._use_amp)
 
         for backbone in self._torch_backbones:
             head = torch.nn.Linear(self._feature_dim(backbone), 2).to(self._device)
@@ -140,7 +160,7 @@ class DoganTriple(Pipeline):
                     tensors = tensors.to(self._device, non_blocking=True)
                     labels = labels.to(self._device, non_blocking=True).long()
                     optim.zero_grad(set_to_none=True)
-                    with torch.cuda.amp.autocast(enabled=self._use_amp):
+                    with torch.amp.autocast("cuda", enabled=self._use_amp):
                         logits = wrapped(tensors)
                         loss = loss_fn(logits, labels)
                     scaler.scale(loss).backward()
@@ -156,11 +176,27 @@ class DoganTriple(Pipeline):
             x = torch.zeros(1, 3, INPUT_SIZE, INPUT_SIZE, device=next(backbone.parameters()).device)
             return backbone(x).shape[-1]
 
+    def _dataset_cache_key(self, dataset) -> tuple:
+        image_ids = tuple(dataset.manifest["image_id"].astype(str))
+        recipe_name = dataset.recipe.meta.name
+        return (
+            self._device,
+            recipe_name,
+            bool(dataset.is_train),
+            bool(dataset.augment_then_split),
+            self._seed,
+            image_ids,
+        )
+
     def _extract(self, dataset) -> tuple[np.ndarray, np.ndarray]:
         import torch
         from torch.utils.data import DataLoader
 
         from . import loader_kwargs
+
+        cache_key = self._dataset_cache_key(dataset)
+        if not self.fine_tune and cache_key in self._FEATURE_CACHE:
+            return self._FEATURE_CACHE[cache_key]
 
         loader = DataLoader(
             dataset,
@@ -184,7 +220,10 @@ class DoganTriple(Pipeline):
                 concat = np.concatenate([*torch_feats, nas_feats], axis=1)
                 all_feats.append(concat)
                 all_labels.append(np.asarray(labels))
-        return np.concatenate(all_feats, axis=0), np.concatenate(all_labels, axis=0)
+        result = np.concatenate(all_feats, axis=0), np.concatenate(all_labels, axis=0)
+        if not self.fine_tune:
+            self._FEATURE_CACHE[cache_key] = result
+        return result
 
     def _keras_extract(self, tensors) -> np.ndarray:
         """Run Keras NASNetMobile on a torch batch and return (B, 1056) GAP features."""
@@ -200,21 +239,40 @@ class DoganTriple(Pipeline):
         arr = np.clip(arr * 255.0, 0, 255)  # to [0, 255]
         arr = arr.transpose(0, 2, 3, 1)  # (B, H, W, C)
         arr = self._keras_preprocess(arr)
-        return self._keras_nasnet.predict(arr, verbose=0)
+        # Use direct model call instead of predict() to bypass TF's tf.data.Dataset
+        # prefetch pipeline, which deadlocks on macOS when TF and PyTorch MPS both
+        # hold system synchronization resources.
+        import tensorflow as tf
+
+        return self._keras_nasnet(tf.constant(arr), training=False).numpy()
 
     def fit(self, dataset, *, seed: int) -> None:
+        self._seed = seed
         self._build_backbones()
         if self.fine_tune:
             self._fine_tune_torch_backbones(dataset, seed)
+        fit_key = (
+            self._dataset_cache_key(dataset),
+            self.ncomponents_pct,
+            self.svm_kernel,
+            self.svm_C,
+        )
+        if not self.fine_tune and fit_key in self._FIT_CACHE:
+            self._nca, self._svm = self._FIT_CACHE[fit_key]
+            return
         X, y = self._extract(dataset)
         n_components = max(1, int(round(self.ncomponents_pct * X.shape[1])))
         self._nca = NeighborhoodComponentsAnalysis(n_components=n_components, random_state=seed)
         X_nca = self._nca.fit_transform(X, y)
-        self._svm = SVC(kernel=self.svm_kernel, C=self.svm_C, probability=True, random_state=seed)
+        self._svm = SVC(kernel=self.svm_kernel, C=self.svm_C, random_state=seed)
         self._svm.fit(X_nca, y)
+        if not self.fine_tune:
+            self._FIT_CACHE[fit_key] = (self._nca, self._svm)
 
     def predict_proba(self, dataset) -> np.ndarray:
         if self._svm is None or self._nca is None:
             raise RuntimeError("predict_proba called before fit")
         X, _ = self._extract(dataset)
-        return self._svm.predict_proba(self._nca.transform(X))
+        margin = self._svm.decision_function(self._nca.transform(X))
+        p = _stable_sigmoid(margin)
+        return np.stack([1 - p, p], axis=1)

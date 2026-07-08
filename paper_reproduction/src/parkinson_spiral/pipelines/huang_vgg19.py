@@ -5,8 +5,6 @@ not specify are defaulted with explicit justification in METHODS_SECTION_NOTES.
 This pipeline fine-tunes a full VGG19 end-to-end and requires a GPU in practice.
 """
 
-from __future__ import annotations
-
 from typing import ClassVar
 
 import numpy as np
@@ -47,6 +45,9 @@ class HuangVGG19(Pipeline):
         "per channel (non-standard for ImageNet-pretrained VGG19, but kept faithful for "
         "the reproduction)."
     )
+    _LAST_FIT_KEY: ClassVar[tuple | None] = None
+    _LAST_MODEL: ClassVar[object | None] = None
+    _LAST_DEVICE: ClassVar[str | None] = None
 
     def __init__(
         self,
@@ -80,21 +81,39 @@ class HuangVGG19(Pipeline):
         from tqdm.auto import tqdm
 
         torch.manual_seed(seed)
-        self._device = "cuda" if torch.cuda.is_available() else "cpu"
-        use_amp = self._device == "cuda"
+        from . import accelerator_device
+
+        self._device = accelerator_device()
+        fit_key = (
+            tuple(dataset.manifest["image_id"].astype(str)),
+            dataset.recipe.meta.name,
+            seed,
+            self.epochs,
+            self.lr,
+            self.batch_size,
+            self.freeze_features,
+            self._device,
+        )
+        if self._LAST_FIT_KEY == fit_key and self._LAST_MODEL is not None:
+            self._model = self._LAST_MODEL
+            self._device = self._LAST_DEVICE
+            return
+        # Enable autocast on CUDA and MPS; GradScaler only on CUDA (MPS doesn't need it).
+        use_amp = self._device in ("cuda", "mps")
+        use_scaler = self._device == "cuda"
         self._model = self._build().to(self._device)
 
         optim = torch.optim.Adam((p for p in self._model.parameters() if p.requires_grad), lr=self.lr)
         sched = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim, T_0=T_0, T_mult=T_MULT, eta_min=ETA_MIN)
         loss_fn = torch.nn.CrossEntropyLoss()
-        scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+        scaler = torch.amp.GradScaler("cuda", enabled=use_scaler)
         from . import loader_kwargs
 
         loader = DataLoader(
             dataset,
             batch_size=self.batch_size,
             shuffle=True,
-            pin_memory=use_amp,
+            pin_memory=use_scaler,
             **loader_kwargs(),
         )
 
@@ -104,13 +123,20 @@ class HuangVGG19(Pipeline):
                 tensors = tensors.to(self._device, non_blocking=True)
                 labels = labels.to(self._device, non_blocking=True).long()
                 optim.zero_grad(set_to_none=True)
-                with torch.cuda.amp.autocast(enabled=use_amp):
+                with torch.amp.autocast(self._device, enabled=use_amp):
                     logits = self._model(tensors)
                     loss = loss_fn(logits, labels)
-                scaler.scale(loss).backward()
-                scaler.step(optim)
-                scaler.update()
+                if use_scaler:
+                    scaler.scale(loss).backward()
+                    scaler.step(optim)
+                    scaler.update()
+                else:
+                    loss.backward()
+                    optim.step()
             sched.step()
+        self.__class__._LAST_FIT_KEY = fit_key
+        self.__class__._LAST_MODEL = self._model
+        self.__class__._LAST_DEVICE = self._device
 
     def predict_proba(self, dataset) -> np.ndarray:
         import torch

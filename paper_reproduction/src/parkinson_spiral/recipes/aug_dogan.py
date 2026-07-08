@@ -18,8 +18,6 @@ source image (used only by the one Dogan fidelity cell that reproduces the
 literature's augment-before-split order).
 """
 
-from __future__ import annotations
-
 import torch
 from PIL import Image
 from torchvision import transforms

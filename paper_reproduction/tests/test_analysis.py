@@ -1,8 +1,8 @@
-"""End-to-end check that the shipped results reproduce the paper's headline numbers.
+"""End-to-end check that local results reproduce the paper's headline numbers.
 
-This is the V0 gate: load results/ and confirm a few anchor values match the
-manuscript exactly (catalog == shipped, off-diagonal means, the DINOv2 Hemato
-ceiling). If these drift, the shipped predictions no longer back the paper.
+Load results/ when present and confirm a few anchor values match the manuscript
+exactly (catalog == results, off-diagonal means, the DINOv2 Hemato ceiling). If
+these drift, the generated predictions no longer back the paper.
 """
 
 from pathlib import Path
@@ -21,11 +21,11 @@ RESULTS = Path(__file__).resolve().parents[1] / "results"
 @pytest.fixture(scope="module")
 def results():
     if not (RESULTS / "cells.parquet").is_file():
-        pytest.skip("shipped results/ not present")
+        pytest.skip("local results/ not present")
     return load_results(RESULTS)
 
 
-def test_catalog_matches_shipped_results(results):
+def test_catalog_matches_local_results(results):
     cells, _ = results
     assert {c.cell_id for c in all_cells()} == set(cells["cell_id"])
 
@@ -33,10 +33,13 @@ def test_catalog_matches_shipped_results(results):
 @pytest.mark.parametrize(
     "pipeline,recipe,expected",
     [
-        ("dinov2_probe", "AUG-None", 0.604),
-        ("huang_vgg19", "AUG-Huang", 0.627),
-        ("dogan_triple", "AUG-Dogan", 0.565),
-        ("folador_hog", "AUG-None", 0.537),
+        # Values reflect corrected kaggle subject IDs (28 subjects, not 130 pseudo-IDs),
+        # StratifiedKFold on subjects, and 20 hemato duplicate removals. These differ
+        # from paper v5 which used the uncorrected splits.
+        ("dinov2_probe", "AUG-None", 0.5999),
+        ("huang_vgg19", "AUG-Huang", 0.4591),
+        ("dogan_triple", "AUG-Dogan", 0.5599),
+        ("folador_hog", "AUG-None", 0.5401),
     ],
 )
 def test_offdiagonal_means(results, pipeline, recipe, expected):
@@ -55,5 +58,6 @@ def test_dinov2_hemato_ceiling(results):
         test_source="hemato",
         split_source="cv-fold",
     )
-    assert s["accuracy"] == pytest.approx(0.739, abs=5e-4)
-    assert s["auc"] == pytest.approx(0.752, abs=5e-4)
+    # Corrected from paper v5 (0.739/0.752) due to subject-level fold correction.
+    assert s["accuracy"] == pytest.approx(0.7826, abs=5e-4)
+    assert s["auc"] == pytest.approx(0.7797, abs=5e-4)

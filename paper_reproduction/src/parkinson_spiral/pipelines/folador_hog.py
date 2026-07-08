@@ -4,8 +4,6 @@ The paper reports the SVM_linear head (the default). HOG params and classifier
 hyperparameters are Folador's published numbers, copied verbatim. CPU-only.
 """
 
-from __future__ import annotations
-
 from typing import ClassVar
 
 import numpy as np
@@ -109,7 +107,7 @@ class FoladorHOG(Pipeline):
         elif self.classifier == "KNN":
             self._model = KNeighborsClassifier(n_neighbors=7, p=1, weights="distance")
         elif self.classifier == "SVM_linear":
-            self._model = SVC(kernel="linear", probability=True, random_state=seed)
+            self._model = SVC(kernel="linear", random_state=seed)
         else:
             self._model = _build_cnn1d_keras(input_dim=X.shape[1], seed=seed)
             self._model.fit(X[..., None], y, epochs=10, batch_size=24, verbose=0)
@@ -123,7 +121,22 @@ class FoladorHOG(Pipeline):
         if self.classifier == "CNN1D":
             p = self._model.predict(X[..., None], verbose=0).reshape(-1)
             return np.stack([1 - p, p], axis=1)
+        if self.classifier == "SVM_linear":
+            margin = self._model.decision_function(X)
+            p = _stable_sigmoid(margin)
+            return np.stack([1 - p, p], axis=1)
         return self._model.predict_proba(X)
+
+
+def _stable_sigmoid(values: np.ndarray) -> np.ndarray:
+    """Map SVM margins to (0, 1) without an internal calibration split."""
+    values = np.asarray(values, dtype=np.float64)
+    out = np.empty_like(values)
+    positive = values >= 0
+    out[positive] = 1.0 / (1.0 + np.exp(-values[positive]))
+    exp_values = np.exp(values[~positive])
+    out[~positive] = exp_values / (1.0 + exp_values)
+    return out
 
 
 def _build_cnn1d_keras(input_dim: int, seed: int):

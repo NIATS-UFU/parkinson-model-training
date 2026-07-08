@@ -1,8 +1,8 @@
 # Datasets
 
-This repository ships **no images**. Layer-1 reproduction (tables and figures from
-the shipped predictions) needs none. Layer-2 re-training needs the datasets placed
-on disk in the layout below.
+This repository ships **no images** and no generated result parquet files. Layer-1
+reproduction needs a local result directory. Layer-2 re-training needs the
+datasets placed on disk in the layout below.
 
 The paper uses three spiral-drawing datasets:
 
@@ -32,7 +32,7 @@ Kaggle+Folador-only `<data-root>` reproduces every non-Hemato cell.
 ## Building the manifest
 
 ```bash
-python scripts/build_manifest.py --data-root <data-root> --out results/manifest.parquet
+python scripts/paper.py build-manifest --data-root <data-root> --out results/manifest.parquet
 ```
 
 This writes one row per image with a unified schema (`dataset`, `subject_id`,

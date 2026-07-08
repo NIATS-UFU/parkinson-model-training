@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader
 
 from parkinson_model_train.data import ImageRecord, TrainingConfig
 from parkinson_model_train.reporting import write_metric_plots
-from parkinson_model_train.train import DrawingDataset, build_image_transforms
+from parkinson_model_train.train import DrawingDataset, _resolve_device, build_image_transforms
 
 
 def test_build_image_transforms_uses_train_only_augmentation(tmp_path: Path) -> None:
@@ -54,6 +54,10 @@ def test_image_transform_returns_pytorch_tensor(tmp_path: Path) -> None:
     tensor = train_transform(image)
 
     assert tuple(tensor.shape) == (3, 32, 32)
+
+
+def test_resolve_device_accepts_apple_mps() -> None:
+    assert _resolve_device("mps").type == "mps"
 
 
 def test_drawing_dataset_iterates_with_pytorch_dataloader(tmp_path: Path) -> None:
