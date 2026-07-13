@@ -117,6 +117,24 @@ def test_hemato_v2_scan_skips_non_matching_folders(tmp_path: Path) -> None:
     assert df.iloc[0]["subject_id"] == "hemato:V1"
 
 
+def test_hemato_v2_scan_skips_byte_identical_duplicate_sessions(tmp_path: Path) -> None:
+    v2 = tmp_path / "hemato" / "output_v2"
+    for session in ("V5_PARKINSON_RAW_DATA_drawings_21", "V5_PARKINSON_RAW_DATA_drawings_22"):
+        final = v2 / session / "5_final"
+        final.mkdir(parents=True)
+        (final / "test1_spi_centered.png").write_bytes(b"identical-content")
+
+    import warnings
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        df = build_hemato_manifest(tmp_path)
+
+    assert len(df) == 1, "duplicate session must be dropped"
+    assert df.iloc[0]["session_id"] == "V5_PARKINSON_RAW_DATA_drawings_21"
+    assert any("byte-identical" in str(w.message) for w in caught)
+
+
 def test_hemato_falls_back_to_empty_when_neither_source_exists(tmp_path: Path) -> None:
     df = build_hemato_manifest(tmp_path)
     assert df.empty

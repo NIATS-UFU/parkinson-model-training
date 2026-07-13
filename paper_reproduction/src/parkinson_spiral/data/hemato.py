@@ -20,7 +20,9 @@ Subject ID + class label parsing:
     drawing type is inferred from the filename: *_spi_* → spiral, *_sen_* → wave.
 """
 
+import hashlib
 import re
+import warnings
 from pathlib import Path
 
 import pandas as pd
@@ -52,13 +54,26 @@ def _drawing_type_from_filename(name: str) -> str | None:
     return None
 
 
+def _session_fingerprint(final_dir: Path, image_paths: list[Path]) -> frozenset[str]:
+    """SHA256-hash every image in the session; return the frozenset of hashes.
+
+    Used to detect sessions whose image content is byte-identical to a previously
+    processed session for the same subject (e.g. the V5/V17 _22 duplicates).
+    """
+    return frozenset(hashlib.sha256(p.read_bytes()).hexdigest() for p in image_paths)
+
+
 def _scan_output_v2(output_root: Path, data_root: Path) -> pd.DataFrame:
     """Build manifest from output_v2 flat session structure (no parquet needed).
 
-    Scans every session directory under output_root for 5_final/*_centered.png
-    and records the absolute path, subject identity, and drawing type.
+    Scans every session directory under output_root for 5_final/*_centered.png.
+    Sessions whose image content is byte-identical to a previously seen session
+    for the same subject are skipped and reported via a warning.
     """
     rows: list[dict] = []
+    # (subject_id, frozenset-of-sha256s) → first session_id that had this content.
+    seen: dict[tuple[str, frozenset[str]], str] = {}
+
     for session_dir in sorted(output_root.iterdir()):
         if not session_dir.is_dir():
             continue
@@ -69,14 +84,29 @@ def _scan_output_v2(output_root: Path, data_root: Path) -> pd.DataFrame:
         final_dir = session_dir / "5_final"
         if not final_dir.is_dir():
             continue
-        for image_path in sorted(final_dir.glob("*_centered.png")):
+
+        image_paths = sorted(final_dir.glob("*_centered.png"))
+        if not image_paths:
+            continue
+
+        fingerprint = _session_fingerprint(final_dir, image_paths)
+        key = (subject_id, fingerprint)
+        if key in seen:
+            warnings.warn(
+                f"Hemato: skipping session {session_id!r} — byte-identical to {seen[key]!r} for subject {subject_id}",
+                stacklevel=2,
+            )
+            continue
+        seen[key] = session_id
+
+        for image_path in image_paths:
             drawing_type = _drawing_type_from_filename(image_path.name)
             if drawing_type is None:
                 continue
             abs_path = image_path.resolve()
-            # Use the logical path through data_root for image_id stability: if output_v2 is a
-            # symlink outside data_root, abs_path.resolve() would point to the symlink target
-            # and relative_to(data_root) would fail. The logical path is always stable.
+            # Use the logical path for image_id stability: if output_v2 is a symlink
+            # outside data_root, abs_path.resolve() points to the symlink target and
+            # relative_to(data_root) would fail.
             logical_rel = (Path("hemato") / "output_v2" / session_dir.name / "5_final" / image_path.name).as_posix()
             rows.append({
                 "image_id": make_image_id("hemato", logical_rel),
