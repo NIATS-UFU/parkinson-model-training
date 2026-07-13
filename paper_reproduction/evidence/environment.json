@@ -7,8 +7,8 @@
   },
   "catalog_cells": 97,
   "git_branch": "cleanup-open-source-pr1",
-  "git_commit": "826a843906283913e2cc02b012c1e519231bb7ba",
-  "git_status": "M .gitignore\n M Makefile\n M README.md\n M docker/Dockerfile\n M paper_reproduction/docs/DECISIONS.md\n M paper_reproduction/docs/REPRODUCE.md\n M paper_reproduction/scripts/paper.py\n M paper_reproduction/src/parkinson_spiral/catalog.py\n M paper_reproduction/src/parkinson_spiral/data/__init__.py\n M paper_reproduction/src/parkinson_spiral/data/hemato.py\n M paper_reproduction/src/parkinson_spiral/data/kaggle.py\n M paper_reproduction/src/parkinson_spiral/data/splits.py\n M paper_reproduction/src/parkinson_spiral/data/unified.py\n M paper_reproduction/src/parkinson_spiral/pipelines/__init__.py\n M paper_reproduction/src/parkinson_spiral/pipelines/dinov2_probe.py\n M paper_reproduction/src/parkinson_spiral/pipelines/dogan_triple.py\n M paper_reproduction/src/parkinson_spiral/pipelines/folador_hog.py\n M paper_reproduction/src/parkinson_spiral/pipelines/huang_vgg19.py\n M paper_reproduction/src/parkinson_spiral/runner.py\n M paper_reproduction/tests/test_analysis.py\n M paper_reproduction/tests/test_catalog.py\n M paper_reproduction/tests/test_protocol.py\n M src/parkinson_model_train/data.py\n M src/parkinson_model_train/main.py\n M src/parkinson_model_train/train.py\n M tests/test_data.py\n M tests/test_train.py\n?? AGENTS.md\n?? paper_reproduction/evidence/\n?? paper_reproduction/uv.lock\n?? uv.lock",
+  "git_commit": "c1bf364fd69042dace78ddaf7ae448caf0d70a16",
+  "git_status": "M paper_reproduction/evidence/catalog.json\n M paper_reproduction/evidence/checksums.sha256\n M paper_reproduction/evidence/environment.json\n M paper_reproduction/evidence/model_configurations.json\n M paper_reproduction/evidence/repository.patch\n M paper_reproduction/src/parkinson_spiral/runner.py\n?? paper_reproduction/evidence/cbeb_2026_conference_v4.pdf\n?? paper_reproduction/evidence/fold_comparison.json\n?? paper_reproduction/evidence/historical_subject_folds.csv",
   "hardware_profile": {
     "Chip": "Apple M4 Pro",
     "Memory": "48 GB",

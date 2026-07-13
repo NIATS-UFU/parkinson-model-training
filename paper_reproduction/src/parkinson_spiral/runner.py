@@ -262,7 +262,7 @@ def run_cell(spec: CellSpec, paths: RunPaths, *, force: bool = False) -> dict[st
         "python_version": platform.python_version(),
         "platform": platform.platform(),
         "infer_latency_ms_per_img": latency,
-        "predictions_path": str(pred_path),
+        "predictions_path": str(pred_path.relative_to(paths.outputs_dir)),
     }
     for level, m in metrics.items():
         if m is None:
