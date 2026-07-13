@@ -74,9 +74,12 @@ def _scan_output_v2(output_root: Path, data_root: Path) -> pd.DataFrame:
             if drawing_type is None:
                 continue
             abs_path = image_path.resolve()
-            manifest_rel = abs_path.relative_to(data_root.resolve()).as_posix()
+            # Use the logical path through data_root for image_id stability: if output_v2 is a
+            # symlink outside data_root, abs_path.resolve() would point to the symlink target
+            # and relative_to(data_root) would fail. The logical path is always stable.
+            logical_rel = (Path("hemato") / "output_v2" / session_dir.name / "5_final" / image_path.name).as_posix()
             rows.append({
-                "image_id": make_image_id("hemato", manifest_rel),
+                "image_id": make_image_id("hemato", logical_rel),
                 "dataset": "hemato",
                 "subject_id": subject_id,
                 "drawing_type": drawing_type,
