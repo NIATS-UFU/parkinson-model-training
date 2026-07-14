@@ -24,8 +24,27 @@ def loader_kwargs() -> dict:
     which requires pickling the dataset and transforms. With spawn, persistent
     worker processes can deadlock against framework initialisation (e.g. TF CPU
     thread pools competing with PyTorch MPS on macOS). Linux `fork` avoids all of
-    this, so we keep 2 workers only there."""
+    this, so we keep 2 workers only there.
+
+    `SPIRAL_NUM_WORKERS` overrides the count. Set it to 0 on Linux for
+    `dogan_triple`: forking a worker poisons OpenBLAS's thread pool, and Dogan's
+    NCA then deadlocks in `scipy.linalg.lu` under `PCA._fit_truncated` once the
+    feature matrix is large enough to cross OpenBLAS's multi-threading threshold
+    (hemato, n_train=2699 x 5024). The smaller kaggle/folador Dogan cells stay
+    single-threaded in BLAS and so survive. This path had never run before: the
+    paper's Dogan cells ran on Windows and the evidence run on macOS, both of
+    which take the `spawn` branch above and never fork.
+
+    The worker count is not only a throughput knob -- the AUG-Huang and AUG-Dogan
+    train transforms are stochastic and are drawn inside the worker, which seeds
+    its RNG from the worker id -- so changing it changes results. Override per
+    pipeline rather than globally."""
     import platform
+
+    override = os.environ.get("SPIRAL_NUM_WORKERS")
+    if override is not None:
+        count = int(override)
+        return {"num_workers": count} if count == 0 else {"num_workers": count, "persistent_workers": True}
 
     use_spawn = os.name == "nt" or platform.system() == "Darwin" or sys.version_info >= (3, 14)
     if use_spawn:
