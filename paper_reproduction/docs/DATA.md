@@ -23,7 +23,7 @@ Place the datasets under a single `<data-root>` directory:
 ├── folador/
 │   └── HOG-IA-desenho-manuscrito/pyTremorDetect/dataset-junto/...
 └── hemato/
-    └── output_v2/
+    └── output/
         ├── V<n>_PARKINSON_RAW_DATA_drawings_<N>/
         │   └── 5_final/
         │       ├── test1_spi_centered.png
@@ -37,7 +37,7 @@ Place the datasets under a single `<data-root>` directory:
 
 Session folders whose name does not match `V<n>_(PARKINSON|CONTROLE)_` are
 silently ignored. Each `5_final/` directory holds exactly the `*_centered.png`
-crops produced by spiral-cropper; there is no central parquet in `output_v2`.
+crops produced by spiral-cropper; there is no central parquet in `output/`.
 
 A dataset that is absent is simply skipped when you build the manifest, so a
 Kaggle+Folador-only `<data-root>` reproduces every non-Hemato cell.
@@ -51,8 +51,9 @@ If you have the older distribution (a single `all_metadata.parquet` file plus a
 <data-root>/hemato/output/all_metadata.parquet
 ```
 
-`build_hemato_manifest` checks for `output_v2/` first and falls back to the
-parquet-based loader automatically. The two layouts are otherwise equivalent.
+`build_hemato_manifest` detects the parquet and uses the legacy loader
+automatically. An `output_v2/` directory is also supported for backward
+compatibility with the previous symlink name.
 
 ## Building the manifest
 
@@ -94,10 +95,10 @@ class-ratio drift for datasets like Hemato where session counts vary widely per 
 ### Hemato — only existing image files
 
 The manifest builder resolves every `final_centered_rel_path` entry to an
-absolute path and drops rows where `abs_path.is_file()` is False. The `output_v2`
+absolute path and drops rows where `abs_path.is_file()` is False. The flat-output
 scanner also only writes a row for files that are actually present on disk. This
 removes stale/phantom entries that arise when session folders are reorganised between
-spiral-cropper runs. A clean `output_v2` manifest should contain:
+spiral-cropper runs. A clean `output/` manifest should contain:
 
 - **698 sessions** across all subjects
 - **6 980 image rows** (exactly 10 per session: 5 spiral + 5 wave)

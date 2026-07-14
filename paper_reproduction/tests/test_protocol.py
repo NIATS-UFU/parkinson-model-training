@@ -75,7 +75,7 @@ def test_kaggle_spiral_and_wave_files_share_subject_identity():
 
 
 def test_hemato_v2_scan_parses_parkinson_session(tmp_path: Path) -> None:
-    session = tmp_path / "hemato" / "output_v2" / "V3_PARKINSON_RAW_DATA_drawings_1" / "5_final"
+    session = tmp_path / "hemato" / "output" / "V3_PARKINSON_RAW_DATA_drawings_1" / "5_final"
     session.mkdir(parents=True)
     (session / "test1_spi_centered.png").write_bytes(b"fake")
     (session / "test1_sen_centered.png").write_bytes(b"fake")
@@ -90,7 +90,7 @@ def test_hemato_v2_scan_parses_parkinson_session(tmp_path: Path) -> None:
 
 
 def test_hemato_v2_scan_parses_control_session(tmp_path: Path) -> None:
-    session = tmp_path / "hemato" / "output_v2" / "V5_CONTROLE_RAW_DATA_drawings_2" / "5_final"
+    session = tmp_path / "hemato" / "output" / "V5_CONTROLE_RAW_DATA_drawings_2" / "5_final"
     session.mkdir(parents=True)
     (session / "test1_spi_centered.png").write_bytes(b"fake")
 
@@ -103,12 +103,12 @@ def test_hemato_v2_scan_parses_control_session(tmp_path: Path) -> None:
 
 
 def test_hemato_v2_scan_skips_non_matching_folders(tmp_path: Path) -> None:
-    v2 = tmp_path / "hemato" / "output_v2"
-    good = v2 / "V1_PARKINSON_RAW_DATA_drawings_1" / "5_final"
+    out = tmp_path / "hemato" / "output"
+    good = out / "V1_PARKINSON_RAW_DATA_drawings_1" / "5_final"
     good.mkdir(parents=True)
     (good / "test1_spi_centered.png").write_bytes(b"fake")
     # Folder without the expected naming pattern — should be ignored.
-    bad = v2 / "misc_notes"
+    bad = out / "misc_notes"
     bad.mkdir()
 
     df = build_hemato_manifest(tmp_path)
@@ -118,9 +118,9 @@ def test_hemato_v2_scan_skips_non_matching_folders(tmp_path: Path) -> None:
 
 
 def test_hemato_v2_scan_skips_byte_identical_duplicate_sessions(tmp_path: Path) -> None:
-    v2 = tmp_path / "hemato" / "output_v2"
+    out = tmp_path / "hemato" / "output"
     for session in ("V5_PARKINSON_RAW_DATA_drawings_21", "V5_PARKINSON_RAW_DATA_drawings_22"):
-        final = v2 / session / "5_final"
+        final = out / session / "5_final"
         final.mkdir(parents=True)
         (final / "test1_spi_centered.png").write_bytes(b"identical-content")
 

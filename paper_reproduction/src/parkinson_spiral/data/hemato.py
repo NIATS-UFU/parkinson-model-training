@@ -4,8 +4,8 @@ Hemato is IRB-restricted clinical data and is NOT shipped with this release. It
 is available on request from NIATS-UFU (see docs/DATA.md). This builder turns
 the dataset's on-disk output into a unified manifest.
 
-Preferred layout — output_v2 (flat session structure, no central parquet):
-    <data_root>/hemato/output_v2/<session_dir>/5_final/*_centered.png
+Preferred layout — flat session structure (no central parquet):
+    <data_root>/hemato/output/<session_dir>/5_final/*_centered.png
 
 where each <session_dir> matches one of:
     V<n>_PARKINSON_RAW_DATA_drawings_<N>   → parkinson
@@ -63,12 +63,15 @@ def _session_fingerprint(final_dir: Path, image_paths: list[Path]) -> frozenset[
     return frozenset(hashlib.sha256(p.read_bytes()).hexdigest() for p in image_paths)
 
 
-def _scan_output_v2(output_root: Path, data_root: Path) -> pd.DataFrame:
-    """Build manifest from output_v2 flat session structure (no parquet needed).
+def _scan_flat_output(output_root: Path, dir_name: str) -> pd.DataFrame:
+    """Build manifest from a flat session structure (no central parquet needed).
 
     Scans every session directory under output_root for 5_final/*_centered.png.
     Sessions whose image content is byte-identical to a previously seen session
     for the same subject are skipped and reported via a warning.
+
+    dir_name is used in the logical relative path for stable image_id hashing
+    and must match the directory name under data_root/hemato/.
     """
     rows: list[dict] = []
     # (subject_id, frozenset-of-sha256s) → first session_id that had this content.
@@ -104,10 +107,10 @@ def _scan_output_v2(output_root: Path, data_root: Path) -> pd.DataFrame:
             if drawing_type is None:
                 continue
             abs_path = image_path.resolve()
-            # Use the logical path for image_id stability: if output_v2 is a symlink
-            # outside data_root, abs_path.resolve() points to the symlink target and
-            # relative_to(data_root) would fail.
-            logical_rel = (Path("hemato") / "output_v2" / session_dir.name / "5_final" / image_path.name).as_posix()
+            # Use the logical path for image_id stability: if the output dir is a
+            # symlink outside data_root, abs_path.resolve() points to the symlink
+            # target and relative_to(data_root) would fail.
+            logical_rel = (Path("hemato") / dir_name / session_dir.name / "5_final" / image_path.name).as_posix()
             rows.append({
                 "image_id": make_image_id("hemato", logical_rel),
                 "dataset": "hemato",
@@ -172,18 +175,24 @@ def _scan_output_legacy(parquet_path: Path, data_root: Path) -> pd.DataFrame:
 def build_hemato_manifest(data_root: Path) -> pd.DataFrame:
     """Build the Hemato portion of the unified manifest.
 
-    Checks for output_v2 first (preferred flat structure), then falls back to
-    the legacy output/ directory with all_metadata.parquet.
+    Priority order:
+    1. output/ without all_metadata.parquet → flat session scan (preferred).
+    2. output/ with all_metadata.parquet    → legacy parquet scan.
+    3. output_v2/                           → flat session scan (old symlink name).
+    4. Neither present                      → empty DataFrame.
     """
     data_root = Path(data_root)
 
-    # Preferred: output_v2 flat session structure, no central parquet needed.
+    output_dir = data_root / "hemato" / "output"
+    if output_dir.is_dir():
+        parquet_path = output_dir / "all_metadata.parquet"
+        if parquet_path.is_file():
+            return _scan_output_legacy(parquet_path, data_root)
+        return _scan_flat_output(output_dir, "output")
+
+    # Backward compat: old symlink name.
     v2_root = data_root / "hemato" / "output_v2"
     if v2_root.is_dir():
-        return _scan_output_v2(v2_root, data_root)
+        return _scan_flat_output(v2_root, "output_v2")
 
-    # Legacy fallback: output/ with central all_metadata.parquet.
-    parquet_path = data_root / "hemato" / "output" / "all_metadata.parquet"
-    if not parquet_path.is_file():
-        return pd.DataFrame([], columns=MANIFEST_COLUMNS)
-    return _scan_output_legacy(parquet_path, data_root)
+    return pd.DataFrame([], columns=MANIFEST_COLUMNS)
