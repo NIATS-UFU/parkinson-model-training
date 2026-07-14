@@ -1,22 +1,24 @@
 """Hemato (NIATS longitudinal clinical dataset) manifest builder.
 
 Hemato is IRB-restricted clinical data and is NOT shipped with this release. It
-is available on request from NIATS-UFU (see docs/DATA.md). This builder is the
-code that turns the dataset's metadata parquet into a unified manifest.
+is available on request from NIATS-UFU (see docs/DATA.md). This builder turns the
+cleaned on-disk image tree into a unified manifest.
 
-Source: <data_root>/hemato/output/all_metadata.parquet. Each row corresponds to
-one cropped image at `final_centered_rel_path`. We derive subject_id,
-class_label, drawing_type, and session_id.
+Source layout — the cleaned ``moura-neto-2023-2025`` release placed under
+``<data_root>/hemato/``::
 
-Subject ID + class label parsing:
-    The session folder leaf name has one of three patterns:
-        V<n>_PARKINSON_RAW_DATA_drawings_<N>      → parkinson
-        V<n>_PARKINSON_DADOS_DESENHOS_<N>         → parkinson
-        V<n>_CONTROLE_RAW_DATA_drawings_<N>       → healthy
-    subject_id is the V<n> prefix of the leaf folder.
+    <data_root>/hemato/V<n>/spiral/V<n>_<PARKINSON|CONTROL>_SPIRAL_<group>_<idx>.png
+    <data_root>/hemato/V<n>/wave/V<n>_<PARKINSON|CONTROL>_WAVE_<group>_<idx>.png
 
-Drawing type: row_type == "spi" → spiral, row_type == "sen" → wave.
-Session ID: the leaf folder name (enables per-session aggregation).
+Fields are derived from the path: subject_id from the ``V<n>`` folder,
+drawing_type from the ``spiral``/``wave`` subfolder, class_label from the
+``PARKINSON``/``CONTROL`` filename token.
+
+Session note: the cleaned release re-batched images into per-subject ``<group>``
+indices and no longer carries the original acquisition-session folders. We use
+``V<n>_<group>`` as session_id so the internal session-level aggregation still
+runs, but it no longer maps to the original ``drawings_N`` sessions. The reported
+paper metrics are subject-level (see metrics.py), so this does not affect them.
 """
 
 import re
@@ -26,67 +28,40 @@ import pandas as pd
 
 from .unified import MANIFEST_COLUMNS, make_image_id
 
-# V<n>_<DATASET_TAG>_<...>_<N>
-_LEAF_RE = re.compile(r"^(V\d+)_(PARKINSON|CONTROLE)_", re.IGNORECASE)
-_ROW_TYPE_TO_DRAWING = {"spi": "spiral", "sen": "wave"}
-
-
-def _parse_leaf(sheet_rel_dir: str) -> tuple[str, str, str]:
-    """Return (subject_id, class_label, session_id) from sheet_rel_dir."""
-    leaf = sheet_rel_dir.rstrip("/").split("/")[-1]
-    m = _LEAF_RE.match(leaf)
-    if not m:
-        raise ValueError(f"Hemato leaf folder did not match expected pattern: {leaf!r}")
-    v_prefix, dataset_tag = m.group(1).upper(), m.group(2).upper()
-    label = "parkinson" if dataset_tag == "PARKINSON" else "healthy"
-    return f"hemato:{v_prefix}", label, leaf
+# V<n>_<PARKINSON|CONTROL>_<SPIRAL|WAVE>_<group>_<idx>.png
+_FILE_RE = re.compile(r"^(V\d+)_(PARKINSON|CONTROL)_[A-Z]+_(\d+)_\d+\.png$", re.IGNORECASE)
+_LABEL = {"PARKINSON": "parkinson", "CONTROL": "healthy"}
 
 
 def build_hemato_manifest(data_root: Path) -> pd.DataFrame:
     data_root = Path(data_root)
-    parquet_path = data_root / "hemato" / "output" / "all_metadata.parquet"
-    if not parquet_path.is_file():
+    hemato_root = data_root / "hemato"
+    if not hemato_root.is_dir():
         return pd.DataFrame([], columns=MANIFEST_COLUMNS)
 
-    meta = pd.read_parquet(parquet_path)
-    meta = meta[meta["final_centered_exists"].astype(bool)].copy()
-
-    output_root = data_root / "hemato" / "output"
     rows: list[dict] = []
-    for _, r in meta.iterrows():
-        sheet = str(r["sheet_rel_dir"])
-        try:
-            subject_id, class_label, session_id = _parse_leaf(sheet)
-        except ValueError:
-            continue
-        row_type = str(r["row_type"]).lower()
-        drawing_type = _ROW_TYPE_TO_DRAWING.get(row_type)
-        if drawing_type is None:
-            continue
-        # The parquet's final_centered_rel_path can be stale for nested sessions;
-        # reconstruct from the leaf folder so the path matches the on-disk layout.
-        recorded = Path(str(r["final_centered_rel_path"]))
-        filename = recorded.name
-        stage = recorded.parent.name  # "5_final"
-        v_prefix = subject_id.split(":")[-1]
-        reconstructed = output_root / v_prefix / session_id / stage / filename
-        if reconstructed.is_file():
-            abs_path = reconstructed.resolve()
-        else:
-            abs_path = (output_root / recorded).resolve()
-        if not abs_path.is_file():
-            continue
-        manifest_rel = abs_path.relative_to(data_root.resolve()).as_posix()
-        rows.append({
-            "image_id": make_image_id("hemato", manifest_rel),
-            "dataset": "hemato",
-            "subject_id": subject_id,
-            "drawing_type": drawing_type,
-            "class_label": class_label,
-            "published_split": None,  # Hemato has no published split; cv_fold assigned downstream
-            "cv_fold": pd.NA,
-            "session_id": session_id,
-            "file_path": str(abs_path),
-            "source_notes": None,
-        })
+    for drawing_type in ("spiral", "wave"):
+        for img in sorted(hemato_root.glob(f"V*/{drawing_type}/*.png")):
+            m = _FILE_RE.match(img.name)
+            if m is None:
+                raise ValueError(f"Hemato image name did not match expected pattern: {img.name!r}")
+            v_prefix, label_tag, group = m.group(1).upper(), m.group(2).upper(), m.group(3)
+            subject_id = f"hemato:{v_prefix}"
+            # image_id is keyed on the path relative to <data_root> (root-independent,
+            # so it survives the data being moved or symlinked); file_path keeps the
+            # resolved absolute path the image loader reads.
+            manifest_rel = (Path("hemato") / img.relative_to(hemato_root)).as_posix()
+            abs_path = img.resolve()
+            rows.append({
+                "image_id": make_image_id("hemato", manifest_rel),
+                "dataset": "hemato",
+                "subject_id": subject_id,
+                "drawing_type": drawing_type,
+                "class_label": _LABEL[label_tag],
+                "published_split": None,  # Hemato has no published split; cv_fold assigned downstream
+                "cv_fold": pd.NA,
+                "session_id": f"{v_prefix}_{group}",
+                "file_path": str(abs_path),
+                "source_notes": "moura-neto-2023-2025 cleaned release",
+            })
     return pd.DataFrame(rows, columns=MANIFEST_COLUMNS)

@@ -67,6 +67,41 @@ python scripts/paper.py build-manifest --data-root <path-with-kaggle-folador-hem
 A dataset that is absent is skipped by `scripts/paper.py reproduce`, so you can build a
 Kaggle+Folador-only manifest and reproduce every cell that does not involve Hemato.
 
+### Audit the manifest before running
+
+A wrong manifest does **not** raise — it silently changes subject counts and fold
+assignment. Confirm it against the expected sizes in [`DATA.md`](DATA.md#expected-manifest-sizes-sanity-check):
+
+```bash
+python - <<'PY'
+import pandas as pd
+m = pd.read_parquet("results/manifest.parquet")
+subj = m[["dataset", "subject_id", "class_label"]].drop_duplicates()
+print("subjects/dataset :", m.groupby("dataset")["subject_id"].nunique().to_dict())
+print("subjects x class :", subj.groupby(["dataset", "class_label"]).size().to_dict())
+print("rows/dataset     :", m.groupby("dataset").size().to_dict())
+print("rows x drawing   :", m.groupby(["dataset", "drawing_type"]).size().to_dict())
+folds = m[["dataset", "subject_id", "cv_fold"]].drop_duplicates().dropna(subset=["cv_fold"])
+print("subjects/fold    :", folds.groupby(["dataset", "cv_fold"]).size().to_dict())
+PY
+```
+
+Expected (must match exactly):
+
+| dataset | subjects (HC / PD) | rows | fold sizes |
+|---|---|---|---|
+| `kaggle`  | 28 (13 / 15) | 204  | 6, 6, 6, 5, 5 |
+| `folador` | 40 (20 / 20) | 960  | 8, 8, 8, 8, 8 |
+| `hemato`  | 46 (19 / 27) | 6990 | 10, 9, 9, 9, 9 |
+
+- **Kaggle ≈ 130 subjects** is the single most common failure: it means the wave-file
+  (`O`) → participant mapping was not applied (see [`DECISIONS.md`](DECISIONS.md) Bug 1).
+- The subject→fold map must equal [`../evidence/subject_folds.csv`](../evidence/subject_folds.csv)
+  (114 subjects; Kaggle + Folador fold-identical).
+- **Known repo cleanup:** the committed `runs/manifest.parquet` predates these fixes
+  (it shows Kaggle 130) — regenerate it with the corrected builder or drop it, and
+  reconcile the `checksums.sha256` / `results.zip` references so nobody builds off it.
+
 ### 2. Re-run the catalog
 
 ```bash

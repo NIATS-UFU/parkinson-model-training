@@ -22,8 +22,8 @@ Place the datasets under a single `<data-root>` directory:
 │   └── {spiral,wave}/{training,testing}/{healthy,parkinson}/*.png
 ├── folador/
 │   └── HOG-IA-desenho-manuscrito/pyTremorDetect/dataset-junto/...
-└── hemato/
-    └── output/all_metadata.parquet        # Hemato is distributed as a metadata parquet + images
+└── hemato/                                # cleaned moura-neto-2023-2025 release
+    └── V<n>/{spiral,wave}/V<n>_<PARKINSON|CONTROL>_<SPIRAL|WAVE>_<group>_<idx>.png
 ```
 
 A dataset that is absent is simply skipped when you build the manifest, so a
@@ -41,6 +41,25 @@ This writes one row per image with a unified schema (`dataset`, `subject_id`,
 appears in both train and test of a CV fold. Cross-dataset cells train on **all**
 of one dataset and test on **all** of another (the three cohorts are disjoint
 populations).
+
+### Expected manifest sizes (sanity check)
+
+A correctly built manifest has exactly these counts. Subject counts are the
+primary invariant (loader-independent); a mismatch means the data on disk is not
+the cleaned release.
+
+| dataset | subjects (HC / PD) | rows | spiral | wave | fold sizes |
+|---|---|---|---|---|---|
+| `kaggle`  | 28 (13 / 15) | 204  | 102  | 102  | 6, 6, 6, 5, 5 |
+| `folador` | 40 (20 / 20) | 960  | 480  | 480  | 8, 8, 8, 8, 8 |
+| `hemato`  | 46 (19 / 27) | **6990** | **3495** | **3495** | 10, 9, 9, 9, 9 |
+| **total** | 114 (52 / 62) | 8154 | 4077 | 4077 | — |
+
+For `hemato`, 6990 is the row count of the cleaned `moura-neto-2023-2025` image
+tree (`hemato/V<n>/{spiral,wave}/*.png`), which the loader enumerates directly.
+Every reported metric is subject-level (see [Labels](#labels)), so the exact
+per-subject image count does not move any paper number — but this is the
+authoritative row total for the released data.
 
 ## Labels
 
