@@ -694,6 +694,188 @@ def freeze_evidence_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def dataset_fingerprint_command(args: argparse.Namespace) -> int:
+    """Hash every image in the manifest and write a per-image fingerprint CSV.
+
+    The fingerprint records image_id, metadata, cv_fold, and the SHA-256 of the
+    image file bytes. A collaborator with the same raw data can re-run
+    verify-fingerprint to confirm their copy matches byte-for-byte.
+    """
+    manifest_path = args.manifest
+    if not manifest_path.is_file():
+        print(f"ERROR: manifest not found: {manifest_path}", file=sys.stderr)
+        return 1
+
+    manifest = pd.read_parquet(manifest_path)
+    args.out.mkdir(parents=True, exist_ok=True)
+
+    rows = []
+    n = len(manifest)
+    for i, (_, row) in enumerate(manifest.iterrows(), 1):
+        if i % 500 == 0 or i == n:
+            print(f"\r  hashing {i}/{n}...", end="", flush=True)
+        fp = Path(str(row["file_path"]))
+        sha = hashlib.sha256(fp.read_bytes()).hexdigest()
+        rows.append({
+            "image_id": row["image_id"],
+            "dataset": row["dataset"],
+            "subject_id": row["subject_id"],
+            "class_label": row["class_label"],
+            "drawing_type": row["drawing_type"],
+            "cv_fold": row["cv_fold"],
+            "sha256": sha,
+        })
+    print()
+
+    df = pd.DataFrame(rows).sort_values("image_id").reset_index(drop=True)
+    out_csv = args.out / "dataset_fingerprint.csv"
+    df.to_csv(out_csv, index=False)
+
+    fingerprint_hash = hashlib.sha256(out_csv.read_bytes()).hexdigest()
+
+    summary: dict = {
+        "fingerprint_sha256": fingerprint_hash,
+        "total_images": int(len(df)),
+        "datasets": {},
+    }
+    # session_id is present for hemato; for others derive a session count from the
+    # parent directory of the logical image path (second-to-last path component).
+    manifest_indexed = manifest.set_index("image_id")
+    for ds in sorted(df["dataset"].unique()):
+        sub = df[df["dataset"] == ds]
+        m_sub = manifest_indexed[manifest_indexed["dataset"] == ds]
+        session_col = "session_id" if "session_id" in m_sub.columns else None
+        if session_col and not m_sub[session_col].isna().all():
+            n_sessions = int(m_sub[session_col].nunique())
+        else:
+            n_sessions = None
+        summary["datasets"][ds] = {
+            "images": int(len(sub)),
+            "subjects": int(sub["subject_id"].nunique()),
+            "sessions": n_sessions,
+            "class_counts": {k: int(v) for k, v in sub.groupby("class_label")["subject_id"].nunique().items()},
+            "fold_distribution": {
+                str(int(k)): int(v)
+                for k, v in sub.dropna(subset=["cv_fold"]).groupby("cv_fold")["subject_id"].nunique().items()
+            },
+        }
+
+    out_summary = args.out / "dataset_fingerprint_summary.json"
+    out_summary.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+
+    print(f"wrote {out_csv}  ({len(df)} rows)")
+    print(f"wrote {out_summary}")
+    print(f"fingerprint SHA-256: {fingerprint_hash}")
+    return 0
+
+
+def verify_fingerprint_command(args: argparse.Namespace) -> int:
+    """Verify the local dataset matches the committed fingerprint.
+
+    Build your manifest first:
+        python scripts/paper.py build-manifest --data-root <your-root>
+
+    Then run:
+        python scripts/paper.py verify-fingerprint
+
+    Every image in the committed fingerprint is looked up by image_id in the
+    local manifest, hashed, and compared. Reports: matched, missing, sha256
+    mismatch, fold mismatch, extra images in local manifest not in fingerprint.
+    """
+    fp_path = args.evidence / "dataset_fingerprint.csv"
+    summary_path = args.evidence / "dataset_fingerprint_summary.json"
+    if not fp_path.is_file():
+        print(f"ERROR: fingerprint not found: {fp_path}", file=sys.stderr)
+        print("       run: python scripts/paper.py dataset-fingerprint", file=sys.stderr)
+        return 1
+
+    manifest_path = args.manifest
+    if not manifest_path.is_file():
+        print(f"ERROR: manifest not found: {manifest_path}", file=sys.stderr)
+        print("       run: python scripts/paper.py build-manifest --data-root <path>", file=sys.stderr)
+        return 1
+
+    expected = pd.read_csv(fp_path)
+    manifest = pd.read_parquet(manifest_path)
+
+    local_by_id = manifest.set_index("image_id")
+
+    matched = sha_mismatch = fold_mismatch = missing = extra = 0
+    failures: list[str] = []
+
+    n = len(expected)
+    for i, (_, row) in enumerate(expected.iterrows(), 1):
+        if i % 500 == 0 or i == n:
+            print(f"\r  checking {i}/{n}...", end="", flush=True)
+
+        iid = row["image_id"]
+        if iid not in local_by_id.index:
+            missing += 1
+            failures.append(f"MISSING  {iid}")
+            continue
+
+        local = local_by_id.loc[iid]
+        fp = Path(str(local["file_path"]))
+        if not fp.is_file():
+            missing += 1
+            failures.append(f"FILE_NOT_FOUND  {iid}  ({fp})")
+            continue
+
+        local_sha = hashlib.sha256(fp.read_bytes()).hexdigest()
+        if local_sha != row["sha256"]:
+            sha_mismatch += 1
+            failures.append(f"SHA256_MISMATCH  {iid}")
+            continue
+
+        # check fold assignment for in-domain (cv_fold is set)
+        expected_fold = row["cv_fold"]
+        local_fold = local["cv_fold"]
+        if not (pd.isna(expected_fold) and pd.isna(local_fold)):
+            if str(expected_fold) != str(local_fold):
+                fold_mismatch += 1
+                failures.append(f"FOLD_MISMATCH  {iid}  expected={expected_fold} got={local_fold}")
+                continue
+
+        matched += 1
+
+    print()
+
+    expected_ids = set(expected["image_id"])
+    local_ids = set(manifest["image_id"])
+    extra = len(local_ids - expected_ids)
+
+    print("\nDataset fingerprint verification")
+    print(f"  fingerprint: {fp_path}")
+    print(f"  manifest:    {manifest_path}")
+    print(f"  expected images:  {n}")
+    print(f"  local images:     {len(manifest)}")
+    print()
+    print(f"  matched:          {matched}")
+    print(f"  missing:          {missing}")
+    print(f"  sha256 mismatch:  {sha_mismatch}")
+    print(f"  fold mismatch:    {fold_mismatch}")
+    print(f"  extra (local only): {extra}")
+
+    if summary_path.is_file():
+        summary = json.loads(summary_path.read_text())
+        print(f"\n  committed fingerprint SHA-256: {summary['fingerprint_sha256']}")
+
+    if failures:
+        print("\nFirst failures (up to 20):")
+        for f in failures[:20]:
+            print(f"  {f}")
+
+    all_ok = missing == 0 and sha_mismatch == 0 and fold_mismatch == 0
+    if all_ok and extra == 0:
+        print("\nPASS: dataset is byte-identical to the committed fingerprint.")
+    elif all_ok and extra > 0:
+        print(f"\nPASS (with extras): all committed images match; {extra} additional images in local manifest.")
+    else:
+        print(f"\nFAIL: {missing + sha_mismatch + fold_mismatch} discrepancies.")
+        return 1
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     repo = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
@@ -728,6 +910,22 @@ def _build_parser() -> argparse.ArgumentParser:
     freeze.add_argument("--manuscript", type=Path, default=Path(""))
     freeze.add_argument("--historical-manifest", type=Path, default=Path(""))
     freeze.set_defaults(func=freeze_evidence_command)
+
+    fingerprint = sub.add_parser(
+        "dataset-fingerprint",
+        help="hash every image in the manifest and write evidence/dataset_fingerprint.csv",
+    )
+    fingerprint.add_argument("--manifest", type=Path, default=repo / "results" / "manifest.parquet")
+    fingerprint.add_argument("--out", type=Path, default=repo / "evidence")
+    fingerprint.set_defaults(func=dataset_fingerprint_command)
+
+    verify_fp = sub.add_parser(
+        "verify-fingerprint",
+        help="verify local dataset matches the committed fingerprint (build-manifest first)",
+    )
+    verify_fp.add_argument("--manifest", type=Path, default=repo / "results" / "manifest.parquet")
+    verify_fp.add_argument("--evidence", type=Path, default=repo / "evidence")
+    verify_fp.set_defaults(func=verify_fingerprint_command)
 
     return parser
 
