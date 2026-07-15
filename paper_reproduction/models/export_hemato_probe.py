@@ -137,7 +137,7 @@ def main() -> None:
         "n_train_subjects": int(hem["subject_id"].nunique()),
         "seed": DEFAULT_SEED,
     }
-    (args.out / "config.json").write_text(json.dumps(config, indent=2), encoding="utf-8")
+    (args.out / "config.json").write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
 
     card_src = REPO / "models" / "MODEL_CARD.md"
     if card_src.is_file():

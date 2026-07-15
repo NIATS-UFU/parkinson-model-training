@@ -561,12 +561,12 @@ def freeze_evidence_command(args: argparse.Namespace) -> int:
             },
         }
         (args.out / "fold_comparison.json").write_text(
-            json.dumps(fold_comparison, indent=2, sort_keys=True),
+            json.dumps(fold_comparison, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
 
     catalog = [{"cell_id": spec.cell_id, **asdict(spec)} for spec in all_cells()]
-    (args.out / "catalog.json").write_text(json.dumps(catalog, indent=2, sort_keys=True), encoding="utf-8")
+    (args.out / "catalog.json").write_text(json.dumps(catalog, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     model_configurations = {
         name: {
             "free_hyperparameters": get_pipeline_class(name).FREE_HYPERPARAMETERS,
@@ -575,7 +575,7 @@ def freeze_evidence_command(args: argparse.Namespace) -> int:
         for name in sorted({spec.pipeline_name for spec in all_cells()})
     }
     (args.out / "model_configurations.json").write_text(
-        json.dumps(model_configurations, indent=2, sort_keys=True),
+        json.dumps(model_configurations, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
 
@@ -636,7 +636,7 @@ def freeze_evidence_command(args: argparse.Namespace) -> int:
         else None,
     }
     (args.out / "environment.json").write_text(
-        json.dumps(environment, indent=2, sort_keys=True),
+        json.dumps(environment, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
     repository_patch = subprocess.run(
@@ -761,7 +761,7 @@ def dataset_fingerprint_command(args: argparse.Namespace) -> int:
         }
 
     out_summary = args.out / "dataset_fingerprint_summary.json"
-    out_summary.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+    out_summary.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     print(f"wrote {out_csv}  ({len(df)} rows)")
     print(f"wrote {out_summary}")
