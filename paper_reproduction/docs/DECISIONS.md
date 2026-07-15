@@ -117,23 +117,12 @@ Each subject contributes exactly one vote to fold assignment regardless of how
 many images they have. The 5-fold split is guaranteed class-stratified at the
 subject level, consistent with the subject-level evaluation protocol.
 
-### Bug 3 — Hemato duplicate images (hemato.py)
+### Bug 3 — Hemato duplicate sheets (hemato.py)
 
-**Root cause.** Sessions 21 and 22 are duplicated at source, for both `V5` and
-`V17`. Each pair holds the same five spiral and five wave drawings, byte-for-byte —
-20 duplicate images:
-
-```
-output/V17/V17_PARKINSON_DADOS_DESENHOS_21/5_final/test1_sen_centered.png
-output/V17/V17_PARKINSON_DADOS_DESENHOS_22/5_final/test1_sen_centered.png   # byte-identical
-```
-
-Both copies sit under the *same* naming convention. The export does use two
-conventions (`RAW_DATA_drawings` for `V5`, `DADOS_DESENHOS` for `V17`), but that is
-per-subject variation and not the source of the duplication.
-
-The builder emits one row per metadata entry, so both copies were kept. Duplicates
-overweight `V5` and `V17` — in training, and in their own subject-level mean
+**Root cause.** Sheets 21 and 22 are the same source sheet, duplicated, for both
+`V5` and `V17`, in spiral and wave alike — 4 sheet pairs × 5 drawings = **20
+duplicate images**. The builder emits one row per file, so paper v5 counted all 20.
+Duplicates overweight `V5` and `V17` in training and in their own subject-level mean
 prediction. Folds are unaffected: `assign_subject_folds` reduces to one row per
 subject, so per-subject image counts cannot reach fold construction.
 
@@ -144,27 +133,18 @@ copies whose identity columns disagree, and keeps the first:
 out.drop_duplicates("_content_sha256", keep="first")
 ```
 
-This is what takes the manifest from 8,178 to 8,158 rows.
+It drops 16 Hemato rows (6,990 files → 6,974 rows; whole manifest 8,154 → 8,138):
+15 of the duplicate sheet images, plus one unrelated `V2` index transposition.
 
-**Not fixed by the existence check.** An earlier version of this entry attributed
-the 8,178 → 8,158 change to dropping rows whose resolved path is missing
-(`if not abs_path.is_file(): continue`), and described the 20 as phantom entries
-pointing at stale paths. That is wrong: against the released export every
-`all_metadata.parquet` row resolves to a real file, so the existence check drops
-**zero** rows. The images are real duplicates and the whole delta is deduplication.
-
-**Still open under the image-tree loader.** The cleaned `moura-neto-2023-2025`
-release carries the same duplication as sheets 21 and 22, but re-cropped `V17`'s
-spirals slightly, so only **15 of the 20** remain byte-identical. Dedup removes
-those 15; the 5 `V17` spiral duplicates survive into the manifest. Byte-identity
-tracks how a file was encoded, not what it depicts, so the number dedup drops is not
-the amount of duplication present. See
+**Residual duplication — 5 images survive.** `V17`'s spiral crops are framed
+slightly differently between the two sheets — the same drawings, marginally
+different translation and scale — so their bytes differ and all five escape the
+hash. A built manifest still contains 5 duplicate images. Byte-identity is a
+property of how a file was encoded, not of what it depicts, so the count dedup
+removes is not the amount of duplication present. The impact is bounded: every
+reported metric is subject-level, so the residual shifts only `V17`'s own mean
+spiral prediction. See
 [`DATA.md`](DATA.md#duplicate-sheets-and-why-dedup-does-not-remove-them-all).
-
-The manifest now has 8,158 rows, each backed by a file that exists. The 20
-removed rows were split evenly across subjects, so no individual subject's fold
-membership changed, but their absence corrects training-set composition in the
-affected folds.
 
 ## Experiment Semantics
 

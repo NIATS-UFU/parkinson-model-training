@@ -101,20 +101,15 @@ Expected (must match exactly):
   [`DATA.md`](DATA.md#expected-manifest-sizes-sanity-check).
 - The subject→fold map must equal [`../evidence/subject_folds.csv`](../evidence/subject_folds.csv)
   for Kaggle and Folador (fold-identical).
-- **Known Hemato fold shift — 3 subjects.** With the image-tree loader, `V2`, `V19`, and
-  `V20` land on different folds than `evidence/subject_folds.csv` records. This is
-  expected and is **not** a data problem. Folds come from
+- **Hemato folds differ from the frozen evidence — 3 subjects.** `V2`, `V19`, and `V20`
+  land on different folds than [`../evidence/subject_folds.csv`](../evidence/subject_folds.csv)
+  records. This is **not** a data problem. Folds come from
   `StratifiedKFold(shuffle=True, random_state=DEFAULT_SEED)` over a one-row-per-subject
-  table, and that shuffle is *positional* — so the subject enumeration order decides the
-  mapping. The old parquet-based loader emitted `... V18, V20, V19, V2, V21 ...`; the
-  image-tree loader globs paths and so emits lexicographic `... V18, V19, V2, V20, V21 ...`.
-  Those three subjects are exactly the ones that moved. Dedup is not involved — the map
-  is identical with and without it. The consequence is that Hemato CV cells are not
-  numerically comparable to the published Hemato numbers; Kaggle and Folador are
-  unaffected.
-- **Known repo cleanup:** the committed `runs/manifest.parquet` predates these fixes
-  (it shows Kaggle 130) — regenerate it with the corrected builder or drop it, and
-  reconcile the `checksums.sha256` / `results.zip` references so nobody builds off it.
+  table, and that shuffle is *positional*: the subject enumeration order decides the
+  mapping, so the fold map is a property of the builder rather than of the data. Dedup is
+  not involved — the map is identical with and without it. Kaggle and Folador match the
+  frozen evidence exactly. Reconciling the frozen evidence with the current builder is
+  pending.
 
 ### 2. Re-run the catalog
 

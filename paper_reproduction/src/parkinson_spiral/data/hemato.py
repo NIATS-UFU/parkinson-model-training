@@ -1,7 +1,8 @@
-"""Hemato (NIATS longitudinal clinical dataset) manifest builder.
+"""Hemato manifest builder — the dataset the paper calls **Moura**.
 
-Hemato is IRB-restricted and is NOT shipped with this release. It is the
-de-identified ``moura-neto-2023-2025`` export, available on request from NIATS-UFU.
+The NIATS-UFU longitudinal clinical cohort, de-identified as the
+``moura-neto-2023-2025`` release. IRB-restricted, so it is NOT shipped here;
+available on request from NIATS-UFU.
 Expected layout (see docs/DATA.md for counts and known duplicates):
 
     <data_root>/hemato/V<n>/{spiral,wave}/V<n>_<PARKINSON|CONTROL>_<SPIRAL|WAVE>_<drawing>_<sheet>.png

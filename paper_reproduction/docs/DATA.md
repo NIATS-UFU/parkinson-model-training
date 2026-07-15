@@ -4,13 +4,17 @@ This repository ships **no images** and no generated result parquet files. Layer
 reproduction needs a local result directory. Layer-2 re-training needs the
 datasets placed on disk in the layout below.
 
-The paper uses three spiral-drawing datasets:
+The paper uses three spiral-drawing datasets. **The dataset keys used in this code
+differ from the names used in the paper** — this table is the mapping:
 
-| Name (paper) | Public? | How to obtain |
-|---|---|---|
-| `kaggle` | Yes | Public Kaggle "Parkinson's Drawings" (Zham et al.) spiral/wave set. |
-| `folador` | Yes | Folador *et al.* HOG-IA pen-and-paper handwriting dataset (`pyTremorDetect`). |
-| `hemato` | **On request** | NIATS-UFU clinical cohort — the de-identified **`moura-neto-2023-2025`** cleaned release (46 participants, spiral + wave). IRB-restricted; available on request — contact NIATS-UFU. This exact release is what the loader expects; earlier raw exports (an `output/all_metadata.parquet` + nested session folders) are **not** compatible. |
+| Code key | Paper name | Public? | How to obtain |
+|---|---|---|---|
+| `kaggle` | **Zham** | Yes | Public Kaggle "Parkinson's Drawings" (Zham *et al.*) spiral/wave set. |
+| `folador` | **Folador** | Yes | Folador *et al.* HOG-IA pen-and-paper handwriting dataset (`pyTremorDetect`). |
+| `hemato` | **Moura** | **On request** | NIATS-UFU longitudinal clinical cohort (46 participants: 19 controls, 27 PD; spiral + wave), the de-identified `moura-neto-2023-2025` release. IRB-restricted; contact NIATS-UFU. |
+
+The Moura dataset is the one the paper cites as `mouraneto2026dataset`; it appears
+throughout the code and this document under its key, `hemato`.
 
 ## On-disk layout
 
@@ -112,11 +116,11 @@ Separately, `V2`'s `SPIRAL_1_3` is byte-identical to `SPIRAL_3_1` (drawing 1 of
 sheet 3 vs drawing 3 of sheet 1) — an index transposition rather than a duplicated
 sheet. Dedup removes it. 15 sheet duplicates + this one = the 16 dropped.
 
-Duplicates are not an artefact of the cleaned release — the earlier raw tree
-carried them too. Dedup does **not** affect fold assignment (folds are computed
-from a one-row-per-subject table; see `data/splits.py`). Every reported metric is
-subject-level (see [Labels](#labels)), so 5 residual duplicates shift only `V17`'s
-mean spiral prediction, and no paper number depends on the exact image count.
+Dedup does **not** affect fold assignment (folds are computed from a
+one-row-per-subject table; see `data/splits.py`). Every reported metric is
+subject-level (see [Labels](#labels)), so the 5 residual duplicates shift only
+`V17`'s mean spiral prediction, and no paper number depends on the exact image
+count.
 
 ## Labels
 
