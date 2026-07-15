@@ -92,12 +92,26 @@ Expected (must match exactly):
 |---|---|---|---|
 | `kaggle`  | 28 (13 / 15) | 204  | 6, 6, 6, 5, 5 |
 | `folador` | 40 (20 / 20) | 960  | 8, 8, 8, 8, 8 |
-| `hemato`  | 46 (19 / 27) | 6990 | 10, 9, 9, 9, 9 |
+| `hemato`  | 46 (19 / 27) | 6974 | 10, 9, 9, 9, 9 |
 
 - **Kaggle ≈ 130 subjects** is the single most common failure: it means the wave-file
   (`O`) → participant mapping was not applied (see [`DECISIONS.md`](DECISIONS.md) Bug 1).
+- **Hemato 6990 rows** means dedup did not run: the image tree holds 6990 files, but
+  `build_unified_manifest` drops 16 byte-identical duplicates. 6974 is correct — see
+  [`DATA.md`](DATA.md#expected-manifest-sizes-sanity-check).
 - The subject→fold map must equal [`../evidence/subject_folds.csv`](../evidence/subject_folds.csv)
-  (114 subjects; Kaggle + Folador fold-identical).
+  for Kaggle and Folador (fold-identical).
+- **Known Hemato fold shift — 3 subjects.** With the image-tree loader, `V2`, `V19`, and
+  `V20` land on different folds than `evidence/subject_folds.csv` records. This is
+  expected and is **not** a data problem. Folds come from
+  `StratifiedKFold(shuffle=True, random_state=DEFAULT_SEED)` over a one-row-per-subject
+  table, and that shuffle is *positional* — so the subject enumeration order decides the
+  mapping. The old parquet-based loader emitted `... V18, V20, V19, V2, V21 ...`; the
+  image-tree loader globs paths and so emits lexicographic `... V18, V19, V2, V20, V21 ...`.
+  Those three subjects are exactly the ones that moved. Dedup is not involved — the map
+  is identical with and without it. The consequence is that Hemato CV cells are not
+  numerically comparable to the published Hemato numbers; Kaggle and Folador are
+  unaffected.
 - **Known repo cleanup:** the committed `runs/manifest.parquet` predates these fixes
   (it shows Kaggle 130) — regenerate it with the corrected builder or drop it, and
   reconcile the `checksums.sha256` / `results.zip` references so nobody builds off it.

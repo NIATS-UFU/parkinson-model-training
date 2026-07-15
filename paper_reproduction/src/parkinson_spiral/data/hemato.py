@@ -1,24 +1,20 @@
 """Hemato (NIATS longitudinal clinical dataset) manifest builder.
 
-Hemato is IRB-restricted clinical data and is NOT shipped with this release. It
-is available on request from NIATS-UFU (see docs/DATA.md). This builder turns the
-cleaned on-disk image tree into a unified manifest.
+Hemato is IRB-restricted and is NOT shipped with this release. It is the
+de-identified ``moura-neto-2023-2025`` export, available on request from NIATS-UFU.
+Expected layout (see docs/DATA.md for counts and known duplicates):
 
-Source layout — the cleaned ``moura-neto-2023-2025`` release placed under
-``<data_root>/hemato/``::
+    <data_root>/hemato/V<n>/{spiral,wave}/V<n>_<PARKINSON|CONTROL>_<SPIRAL|WAVE>_<drawing>_<sheet>.png
 
-    <data_root>/hemato/V<n>/spiral/V<n>_<PARKINSON|CONTROL>_SPIRAL_<group>_<idx>.png
-    <data_root>/hemato/V<n>/wave/V<n>_<PARKINSON|CONTROL>_WAVE_<group>_<idx>.png
+Filename convention:
+    The SECOND number is the source sheet; the first is which drawing on it (every
+    sheet carries exactly 5). subject_id comes from the ``V<n>`` folder, drawing_type
+    from the subfolder, class_label from the filename token.
 
-Fields are derived from the path: subject_id from the ``V<n>`` folder,
-drawing_type from the ``spiral``/``wave`` subfolder, class_label from the
-``PARKINSON``/``CONTROL`` filename token.
-
-Session note: the cleaned release re-batched images into per-subject ``<group>``
-indices and no longer carries the original acquisition-session folders. We use
-``V<n>_<group>`` as session_id so the internal session-level aggregation still
-runs, but it no longer maps to the original ``drawings_N`` sessions. The reported
-paper metrics are subject-level (see metrics.py), so this does not affect them.
+    session_id is ``V<n>_<drawing>``, so it groups by position on the sheet rather
+    than by acquisition — the sheet is the acquisition unit. Reported metrics are
+    subject-level, so nothing published depends on it; do not read session-level
+    output as per-acquisition.
 """
 
 import re
@@ -28,7 +24,8 @@ import pandas as pd
 
 from .unified import MANIFEST_COLUMNS, make_image_id
 
-# V<n>_<PARKINSON|CONTROL>_<SPIRAL|WAVE>_<group>_<idx>.png
+# V<n>_<PARKINSON|CONTROL>_<SPIRAL|WAVE>_<drawing>_<sheet>.png
+# Captures <drawing> (position on the sheet); <sheet> is matched but unused.
 _FILE_RE = re.compile(r"^(V\d+)_(PARKINSON|CONTROL)_[A-Z]+_(\d+)_\d+\.png$", re.IGNORECASE)
 _LABEL = {"PARKINSON": "parkinson", "CONTROL": "healthy"}
 

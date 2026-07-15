@@ -119,34 +119,47 @@ subject level, consistent with the subject-level evaluation protocol.
 
 ### Bug 3 — Hemato duplicate images (hemato.py)
 
-**Root cause.** The Hemato metadata parquet (`all_metadata.parquet`) was built
-from session data collected under two naming conventions (V5 and V17 folders).
-Twenty images appeared in entries for both naming schemes. The manifest builder
-attempted to resolve each row's path but did not check whether the resolved
-file actually existed on disk:
+**Root cause.** Sessions 21 and 22 are duplicated at source, for both `V5` and
+`V17`. Each pair holds the same five spiral and five wave drawings, byte-for-byte —
+20 duplicate images:
 
-```python
-# BEFORE (wrong): no existence check after path resolution
-abs_path = (output_root / recorded).resolve()
-manifest_rel = abs_path.relative_to(data_root.resolve()).as_posix()
-rows.append({...})  # appended even if abs_path did not exist
+```
+output/V17/V17_PARKINSON_DADOS_DESENHOS_21/5_final/test1_sen_centered.png
+output/V17/V17_PARKINSON_DADOS_DESENHOS_22/5_final/test1_sen_centered.png   # byte-identical
 ```
 
-Rows whose recorded path was stale (the session had been reorganised under the
-other naming convention) were appended with a non-existent file path. Combined
-with the rows for the same image under its active path, this produced 20 phantom
-duplicate entries and an 8,178-row manifest instead of the correct 8,158.
+Both copies sit under the *same* naming convention. The export does use two
+conventions (`RAW_DATA_drawings` for `V5`, `DADOS_DESENHOS` for `V17`), but that is
+per-subject variation and not the source of the duplication.
 
-If a pipeline attempted to load a phantom path, the image loader could return
-zeros or trigger a silent skip, silently corrupting predictions.
+The builder emits one row per metadata entry, so both copies were kept. Duplicates
+overweight `V5` and `V17` — in training, and in their own subject-level mean
+prediction. Folds are unaffected: `assign_subject_folds` reduces to one row per
+subject, so per-subject image counts cannot reach fold construction.
 
-**Fix.** Drop any row whose resolved path is not a real file:
+**Fix.** `deduplicate_exact_images` (`data/unified.py`) hashes file bytes, rejects
+copies whose identity columns disagree, and keeps the first:
 
 ```python
-# AFTER (correct):
-if not abs_path.is_file():
-    continue
+out.drop_duplicates("_content_sha256", keep="first")
 ```
+
+This is what takes the manifest from 8,178 to 8,158 rows.
+
+**Not fixed by the existence check.** An earlier version of this entry attributed
+the 8,178 → 8,158 change to dropping rows whose resolved path is missing
+(`if not abs_path.is_file(): continue`), and described the 20 as phantom entries
+pointing at stale paths. That is wrong: against the released export every
+`all_metadata.parquet` row resolves to a real file, so the existence check drops
+**zero** rows. The images are real duplicates and the whole delta is deduplication.
+
+**Still open under the image-tree loader.** The cleaned `moura-neto-2023-2025`
+release carries the same duplication as sheets 21 and 22, but re-cropped `V17`'s
+spirals slightly, so only **15 of the 20** remain byte-identical. Dedup removes
+those 15; the 5 `V17` spiral duplicates survive into the manifest. Byte-identity
+tracks how a file was encoded, not what it depicts, so the number dedup drops is not
+the amount of duplication present. See
+[`DATA.md`](DATA.md#duplicate-sheets-and-why-dedup-does-not-remove-them-all).
 
 The manifest now has 8,158 rows, each backed by a file that exists. The 20
 removed rows were split evenly across subjects, so no individual subject's fold
