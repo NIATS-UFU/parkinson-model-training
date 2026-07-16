@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import parkinson_spiral.analysis as A  # noqa: E402
 from parkinson_spiral.catalog import EXPECTED_N_CELLS, all_cells  # noqa: E402
 from parkinson_spiral.pipelines import get_pipeline_class  # noqa: E402
-from parkinson_spiral.runner import RunPaths, run_cell  # noqa: E402
+from parkinson_spiral.runner import RunPaths, contiguous_shard, run_cell  # noqa: E402
 
 SOURCES = ("kaggle", "folador", "hemato")
 SHORT = {"kaggle": "K", "folador": "F", "hemato": "H"}
@@ -91,8 +91,10 @@ def reproduce_command(args: argparse.Namespace) -> int:
     if args.pipeline:
         keep = set(args.pipeline)
         cells = [c for c in cells if c.pipeline_name in keep]
+    cells = contiguous_shard(cells, shard_count=args.shard_count, shard_index=args.shard_index)
 
-    print(f"{len(cells)} cells selected")
+    shard = f" (shard {args.shard_index + 1}/{args.shard_count})" if args.shard_count > 1 else ""
+    print(f"{len(cells)} cells selected{shard}")
     if args.dry_run:
         for c in cells:
             gpu = " [GPU]" if c.pipeline_name in GPU_PIPELINES else ""
@@ -890,6 +892,8 @@ def _build_parser() -> argparse.ArgumentParser:
     reproduce.add_argument("--manifest", type=Path, default=repo / "results" / "manifest.parquet")
     reproduce.add_argument("--out", type=Path, default=repo / "runs" / "reproduce")
     reproduce.add_argument("--pipeline", action="append", default=None, help="restrict to these pipeline names")
+    reproduce.add_argument("--shard-count", type=int, default=1, help="split selected cells into contiguous shards")
+    reproduce.add_argument("--shard-index", type=int, default=0, help="zero-based shard to run")
     reproduce.add_argument("--dry-run", action="store_true", help="list cells and exit without training")
     reproduce.add_argument("--force", action="store_true", help="recompute even if cached")
     reproduce.set_defaults(func=reproduce_command)

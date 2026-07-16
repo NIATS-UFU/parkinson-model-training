@@ -13,6 +13,7 @@ import os
 import platform
 import random
 import subprocess
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -26,6 +27,17 @@ from .metrics import metrics_at_all_levels
 from .protocol import CellSpec, Pipeline
 
 _SUBJECT_CLEAN_CACHE: dict[tuple[str, int, float], pd.Series] = {}
+
+
+def contiguous_shard(items: list[Any], *, shard_count: int, shard_index: int) -> list[Any]:
+    """Return one balanced contiguous shard while preserving catalog order."""
+    if shard_count < 1:
+        raise ValueError("shard_count must be at least 1")
+    if not 0 <= shard_index < shard_count:
+        raise ValueError(f"shard_index must be in [0, {shard_count}); got {shard_index}")
+    start = len(items) * shard_index // shard_count
+    end = len(items) * (shard_index + 1) // shard_count
+    return items[start:end]
 
 
 def _task_mask(manifest: pd.DataFrame, task_filter: str) -> pd.Series:
@@ -260,14 +272,35 @@ def _is_cached(paths: RunPaths, cell_id: str, cache_signature: str) -> bool:
     return bool(((cells["cell_id"] == cell_id) & (cells["cache_signature"] == cache_signature)).any())
 
 
-def _append_cell_row(paths: RunPaths, row: dict[str, Any]) -> None:
-    df = pd.DataFrame([row])
-    if paths.cells_path.is_file():
-        existing = pd.read_parquet(paths.cells_path)
-        existing = existing[existing["cell_id"] != row["cell_id"]]
-        df = pd.concat([existing, df], ignore_index=True)
+@contextmanager
+def _cells_file_lock(paths: RunPaths):
     paths.cells_path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(paths.cells_path, index=False)
+    lock_path = paths.cells_path.with_suffix(".lock")
+    with lock_path.open("a+b") as lock_file:
+        if os.name == "posix":
+            import fcntl
+
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if os.name == "posix":
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def _append_cell_row(paths: RunPaths, row: dict[str, Any]) -> None:
+    with _cells_file_lock(paths):
+        df = pd.DataFrame([row])
+        if paths.cells_path.is_file():
+            existing = pd.read_parquet(paths.cells_path)
+            existing = existing[existing["cell_id"] != row["cell_id"]]
+            df = pd.concat([existing, df], ignore_index=True)
+        temporary = paths.cells_path.with_name(f".{paths.cells_path.name}.{os.getpid()}.tmp")
+        try:
+            df.to_parquet(temporary, index=False)
+            os.replace(temporary, paths.cells_path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
 
 def run_cell(spec: CellSpec, paths: RunPaths, *, force: bool = False) -> dict[str, Any]:
