@@ -91,6 +91,13 @@ def reproduce_command(args: argparse.Namespace) -> int:
     if args.pipeline:
         keep = set(args.pipeline)
         cells = [c for c in cells if c.pipeline_name in keep]
+    if args.cell_id:
+        requested = set(args.cell_id)
+        available = {cell.cell_id for cell in cells}
+        unknown = sorted(requested - available)
+        if unknown:
+            raise SystemExit(f"unknown or filtered-out cell ids: {unknown}")
+        cells = [cell for cell in cells if cell.cell_id in requested]
     cells = contiguous_shard(cells, shard_count=args.shard_count, shard_index=args.shard_index)
 
     shard = f" (shard {args.shard_index + 1}/{args.shard_count})" if args.shard_count > 1 else ""
@@ -892,6 +899,7 @@ def _build_parser() -> argparse.ArgumentParser:
     reproduce.add_argument("--manifest", type=Path, default=repo / "results" / "manifest.parquet")
     reproduce.add_argument("--out", type=Path, default=repo / "runs" / "reproduce")
     reproduce.add_argument("--pipeline", action="append", default=None, help="restrict to these pipeline names")
+    reproduce.add_argument("--cell-id", action="append", default=None, help="restrict to exact catalog cell ids")
     reproduce.add_argument("--shard-count", type=int, default=1, help="split selected cells into contiguous shards")
     reproduce.add_argument("--shard-index", type=int, default=0, help="zero-based shard to run")
     reproduce.add_argument("--dry-run", action="store_true", help="list cells and exit without training")
