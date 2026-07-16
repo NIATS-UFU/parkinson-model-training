@@ -5,6 +5,7 @@ not specify are defaulted with explicit justification in METHODS_SECTION_NOTES.
 This pipeline fine-tunes a full VGG19 end-to-end and requires a GPU in practice.
 """
 
+import math
 from typing import ClassVar
 
 import numpy as np
@@ -18,6 +19,7 @@ BATCH_SIZE = 32
 T_0 = 10  # CosineAnnealingWarmRestarts; Huang did not specify — default
 T_MULT = 2  # default
 ETA_MIN = 1e-6  # default
+GRAD_MAX_NORM = 1.0  # numerical safeguard for end-to-end VGG19 fine-tuning
 
 
 def _uses_mixed_precision(device: str) -> bool:
@@ -26,20 +28,25 @@ def _uses_mixed_precision(device: str) -> bool:
     return device == "cuda"
 
 
-def _validate_gradient_norm(parameters, *, epoch: int) -> None:
+def _validate_gradient_norm_value(norm: float, *, recover_nonfinite: bool, epoch: int) -> None:
+    if not math.isfinite(norm):
+        if recover_nonfinite:
+            return
+        raise FloatingPointError(f"Huang VGG19 produced non-finite gradients in epoch {epoch + 1}")
+    if norm == 0.0:
+        raise RuntimeError(f"Huang VGG19 produced zero gradients in epoch {epoch + 1}; training would collapse")
+
+
+def _clip_gradients(parameters, *, recover_nonfinite: bool, epoch: int) -> None:
     import torch
 
     trainable = [parameter for parameter in parameters if parameter.requires_grad]
-    try:
-        norm = torch.nn.utils.clip_grad_norm_(
-            trainable,
-            max_norm=float("inf"),
-            error_if_nonfinite=True,
-        )
-    except RuntimeError as exc:
-        raise FloatingPointError(f"Huang VGG19 produced non-finite gradients in epoch {epoch + 1}") from exc
-    if norm.item() == 0.0:
-        raise RuntimeError(f"Huang VGG19 produced zero gradients in epoch {epoch + 1}; training would collapse")
+    norm = torch.nn.utils.clip_grad_norm_(
+        trainable,
+        max_norm=GRAD_MAX_NORM,
+        error_if_nonfinite=False,
+    )
+    _validate_gradient_norm_value(float(norm), recover_nonfinite=recover_nonfinite, epoch=epoch)
 
 
 class HuangVGG19(Pipeline):
@@ -52,6 +59,7 @@ class HuangVGG19(Pipeline):
         "T_0",
         "T_mult",
         "eta_min",
+        "gradient_max_norm",
         "rotation_degrees",
         "image_size",
         "norm_mean",
@@ -65,7 +73,8 @@ class HuangVGG19(Pipeline):
         "specify T_0, T_mult, eta_min — we default to PyTorch defaults (T_0=10, T_mult=2, "
         "eta_min=1e-6) and document. Normalization uses Huang's published mean=0.5/std=0.5 "
         "per channel (non-standard for ImageNet-pretrained VGG19, but kept faithful for "
-        "the reproduction)."
+        "the reproduction). Gradients are clipped to a maximum norm of 1.0 after AMP "
+        "unscaling to prevent unstable end-to-end updates."
     )
     _LAST_FIT_KEY: ClassVar[tuple | None] = None
     _LAST_MODEL: ClassVar[object | None] = None
@@ -140,7 +149,8 @@ class HuangVGG19(Pipeline):
 
         self._model.train()
         for epoch in tqdm(range(self.epochs), desc="huang-epoch", leave=False):
-            for batch_index, (tensors, labels, _) in enumerate(loader):
+            epoch_had_update = False
+            for tensors, labels, _ in loader:
                 tensors = tensors.to(self._device, non_blocking=True)
                 labels = labels.to(self._device, non_blocking=True).long()
                 optim.zero_grad(set_to_none=True)
@@ -150,15 +160,18 @@ class HuangVGG19(Pipeline):
                 if use_scaler:
                     scaler.scale(loss).backward()
                     scaler.unscale_(optim)
-                    if batch_index == 0:
-                        _validate_gradient_norm(self._model.parameters(), epoch=epoch)
+                    _clip_gradients(self._model.parameters(), recover_nonfinite=True, epoch=epoch)
+                    scale_before_step = scaler.get_scale()
                     scaler.step(optim)
                     scaler.update()
+                    epoch_had_update |= scaler.get_scale() >= scale_before_step
                 else:
                     loss.backward()
-                    if batch_index == 0:
-                        _validate_gradient_norm(self._model.parameters(), epoch=epoch)
+                    _clip_gradients(self._model.parameters(), recover_nonfinite=False, epoch=epoch)
                     optim.step()
+                    epoch_had_update = True
+            if not epoch_had_update:
+                raise FloatingPointError(f"Huang VGG19 produced no valid optimizer updates in epoch {epoch + 1}")
             sched.step()
         self.__class__._LAST_FIT_KEY = fit_key
         self.__class__._LAST_MODEL = self._model
