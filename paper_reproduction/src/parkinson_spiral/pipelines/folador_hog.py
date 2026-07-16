@@ -35,6 +35,7 @@ _VALID_CLASSIFIERS = {"RFC", "KNN", "SVM_linear", "CNN1D"}
 
 class FoladorHOG(Pipeline):
     name: ClassVar[str] = "folador_hog"
+    MODEL_WEIGHT_IDENTIFIERS: ClassVar[dict[str, str]] = {}
     FREE_HYPERPARAMETERS: ClassVar[list[str]] = [
         "classifier",
         "hog_orientations",
@@ -59,6 +60,7 @@ class FoladorHOG(Pipeline):
         self.classifier = classifier
         self.batch_size = batch_size
         self._model = None
+        self._model_weight_checksums: dict[str, str] = {}
 
     def _extract(self, dataset) -> tuple[np.ndarray, np.ndarray]:
         from torch.utils.data import DataLoader

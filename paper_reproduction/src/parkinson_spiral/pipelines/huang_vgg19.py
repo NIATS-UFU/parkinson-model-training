@@ -51,6 +51,9 @@ def _clip_gradients(parameters, *, recover_nonfinite: bool, epoch: int) -> None:
 
 class HuangVGG19(Pipeline):
     name: ClassVar[str] = "huang_vgg19"
+    MODEL_WEIGHT_IDENTIFIERS: ClassVar[dict[str, str]] = {
+        "vgg19": "torchvision:VGG19_Weights.IMAGENET1K_V1:sha256-prefix-dcbb9e9d"
+    }
     FREE_HYPERPARAMETERS: ClassVar[list[str]] = [
         "lr",
         "batch_size",
@@ -79,6 +82,7 @@ class HuangVGG19(Pipeline):
     _LAST_FIT_KEY: ClassVar[tuple | None] = None
     _LAST_MODEL: ClassVar[object | None] = None
     _LAST_DEVICE: ClassVar[str | None] = None
+    _PRETRAINED_CHECKSUM: ClassVar[str | None] = None
 
     def __init__(
         self,
@@ -99,6 +103,14 @@ class HuangVGG19(Pipeline):
         from torchvision.models import VGG19_Weights, vgg19
 
         model = vgg19(weights=VGG19_Weights.IMAGENET1K_V1)
+        if self._PRETRAINED_CHECKSUM is None:
+            from ..weight_checksums import torch_module_sha256
+
+            self.__class__._PRETRAINED_CHECKSUM = torch_module_sha256(model)
+        self._model_weight_checksums = {"vgg19": self._PRETRAINED_CHECKSUM}
+        # With the recipe's fixed 224x224 input, VGG19 features are already
+        # 7x7. Avoiding this no-op removes a nondeterministic CUDA backward op.
+        model.avgpool = torch.nn.Identity()
         in_features = model.classifier[-1].in_features
         model.classifier[-1] = torch.nn.Linear(in_features, 2)
         if self.freeze_features:

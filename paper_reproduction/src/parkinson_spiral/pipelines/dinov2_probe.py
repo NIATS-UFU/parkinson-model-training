@@ -21,6 +21,10 @@ _DINOV2_HUB_REPO = "facebookresearch/dinov2:7764ea0f912e53c92e82eb78a2a1631e9272
 
 class DinoV2Probe(Pipeline):
     name: ClassVar[str] = "dinov2_probe"
+    MODEL_WEIGHT_IDENTIFIERS: ClassVar[dict[str, str]] = {
+        "dinov2_source": _DINOV2_HUB_REPO,
+        "dinov2_weights": "official checkpoint selected by vit_size",
+    }
     FREE_HYPERPARAMETERS: ClassVar[list[str]] = ["vit_size", "probe_C", "image_size"]
     METHODS_SECTION_NOTES: ClassVar[str] = (
         "DINOv2 (Oquab et al., 2023) is used as a frozen feature extractor. We use the "
@@ -34,6 +38,7 @@ class DinoV2Probe(Pipeline):
         "size-vs-accuracy trade-off is reported."
     )
     _BACKBONE_CACHE: ClassVar[dict[tuple[str, str], object]] = {}
+    _BACKBONE_CHECKSUMS: ClassVar[dict[str, str]] = {}
     _FEATURE_CACHE: ClassVar[dict[tuple[str, str], np.ndarray]] = {}
 
     def __init__(
@@ -80,12 +85,16 @@ class DinoV2Probe(Pipeline):
                 )
             else:
                 backbone = torch.hub.load(_DINOV2_HUB_REPO, f"dinov2_{self.vit_size}")
+            from ..weight_checksums import torch_module_sha256
+
+            self._BACKBONE_CHECKSUMS[self.vit_size] = torch_module_sha256(backbone)
             backbone.eval()
             for p in backbone.parameters():
                 p.requires_grad = False
             backbone = backbone.to(self._device)
             self._BACKBONE_CACHE[cache_key] = backbone
         self._backbone = backbone
+        self._model_weight_checksums = {"dinov2": self._BACKBONE_CHECKSUMS[self.vit_size]}
 
     @staticmethod
     def _can_cache_features(dataset) -> bool:

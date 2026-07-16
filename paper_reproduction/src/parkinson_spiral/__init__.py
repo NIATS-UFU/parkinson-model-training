@@ -9,6 +9,13 @@ The naming here matches the paper exactly (datasets kaggle/folador/hemato,
 recipes AUG-*), not the internal development codenames.
 """
 
+import os
+
+# These must be set before CUDA or TensorFlow initialise. The fixed seed itself
+# is applied by the runner for every catalog cell.
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+os.environ.setdefault("TF_DETERMINISTIC_OPS", "1")
+
 __version__ = "1.0.0"
 
 # The seed every experiment in the paper was run with (locked).
