@@ -20,6 +20,28 @@ T_MULT = 2  # default
 ETA_MIN = 1e-6  # default
 
 
+def _uses_mixed_precision(device: str) -> bool:
+    # CUDA has loss scaling below. MPS does not, so full precision avoids
+    # underflowing the small gradients produced by end-to-end fine-tuning.
+    return device == "cuda"
+
+
+def _validate_gradient_norm(parameters, *, epoch: int) -> None:
+    import torch
+
+    trainable = [parameter for parameter in parameters if parameter.requires_grad]
+    try:
+        norm = torch.nn.utils.clip_grad_norm_(
+            trainable,
+            max_norm=float("inf"),
+            error_if_nonfinite=True,
+        )
+    except RuntimeError as exc:
+        raise FloatingPointError(f"Huang VGG19 produced non-finite gradients in epoch {epoch + 1}") from exc
+    if norm.item() == 0.0:
+        raise RuntimeError(f"Huang VGG19 produced zero gradients in epoch {epoch + 1}; training would collapse")
+
+
 class HuangVGG19(Pipeline):
     name: ClassVar[str] = "huang_vgg19"
     FREE_HYPERPARAMETERS: ClassVar[list[str]] = [
@@ -98,9 +120,8 @@ class HuangVGG19(Pipeline):
             self._model = self._LAST_MODEL
             self._device = self._LAST_DEVICE
             return
-        # Enable autocast on CUDA and MPS; GradScaler only on CUDA (MPS doesn't need it).
-        use_amp = self._device in ("cuda", "mps")
-        use_scaler = self._device == "cuda"
+        use_amp = _uses_mixed_precision(self._device)
+        use_scaler = use_amp
         self._model = self._build().to(self._device)
 
         optim = torch.optim.Adam((p for p in self._model.parameters() if p.requires_grad), lr=self.lr)
@@ -118,8 +139,8 @@ class HuangVGG19(Pipeline):
         )
 
         self._model.train()
-        for _epoch in tqdm(range(self.epochs), desc="huang-epoch", leave=False):
-            for tensors, labels, _ in loader:
+        for epoch in tqdm(range(self.epochs), desc="huang-epoch", leave=False):
+            for batch_index, (tensors, labels, _) in enumerate(loader):
                 tensors = tensors.to(self._device, non_blocking=True)
                 labels = labels.to(self._device, non_blocking=True).long()
                 optim.zero_grad(set_to_none=True)
@@ -128,10 +149,15 @@ class HuangVGG19(Pipeline):
                     loss = loss_fn(logits, labels)
                 if use_scaler:
                     scaler.scale(loss).backward()
+                    scaler.unscale_(optim)
+                    if batch_index == 0:
+                        _validate_gradient_norm(self._model.parameters(), epoch=epoch)
                     scaler.step(optim)
                     scaler.update()
                 else:
                     loss.backward()
+                    if batch_index == 0:
+                        _validate_gradient_norm(self._model.parameters(), epoch=epoch)
                     optim.step()
             sched.step()
         self.__class__._LAST_FIT_KEY = fit_key
