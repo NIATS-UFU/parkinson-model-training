@@ -28,6 +28,7 @@ pipelines across three datasets in a full train × test factorial:
 - `requirements-lock.txt` — fully pinned transitive dependency lock for exact
   Python 3.13 reproduction environments.
 - `docs/` — [`REPRODUCE.md`](docs/REPRODUCE.md), [`DATA.md`](docs/DATA.md),
+  [`GCP_COLLABORATOR.md`](docs/GCP_COLLABORATOR.md),
   [`PROVENANCE.md`](docs/PROVENANCE.md), and review
   [`DECISIONS.md`](docs/DECISIONS.md).
 
