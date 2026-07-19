@@ -497,7 +497,15 @@ def _git_value(repo: Path, *args: str) -> str | None:
 
 
 def _command_output(*args: str) -> str | None:
-    completed = subprocess.run(args, check=False, capture_output=True, text=True)
+    # Optional environment probe. Some callers run tools that exist only on
+    # certain platforms (e.g. macOS-only `system_profiler`); off that platform
+    # the executable is simply absent, which is a normal condition rather than a
+    # failure. Treat a missing binary like a non-zero exit and return None so the
+    # evidence capture degrades gracefully instead of crashing on Linux/Windows.
+    try:
+        completed = subprocess.run(args, check=False, capture_output=True, text=True)
+    except FileNotFoundError:
+        return None
     return completed.stdout.strip() if completed.returncode == 0 else None
 
 
