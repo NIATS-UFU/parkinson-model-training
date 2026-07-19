@@ -167,7 +167,9 @@ class DoganTriple(Pipeline):
                 batch_size=self.batch_size,
                 shuffle=True,
                 pin_memory=(self._device == "cuda"),
-                **loader_kwargs(),
+                # forbid_fork: this pipeline's NCA does a large BLAS solve; a forked
+                # DataLoader worker would poison OpenBLAS and deadlock it on Linux.
+                **loader_kwargs(forbid_fork=True),
             )
             wrapped.train()
             for _epoch in tqdm(range(self.epochs), desc="dogan-ft-epoch", leave=False):
@@ -218,7 +220,9 @@ class DoganTriple(Pipeline):
             batch_size=self.batch_size,
             shuffle=False,
             pin_memory=(self._device == "cuda"),
-            **loader_kwargs(),
+            # forbid_fork: keep every Dogan DataLoader single-process on Linux so no
+            # fork poisons OpenBLAS before the NCA BLAS solve (see loader_kwargs).
+            **loader_kwargs(forbid_fork=True),
         )
         all_feats: list[np.ndarray] = []
         all_labels: list[np.ndarray] = []
