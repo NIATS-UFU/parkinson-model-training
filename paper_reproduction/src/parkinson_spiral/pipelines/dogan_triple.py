@@ -31,6 +31,11 @@ INPUT_SIZE = 224  # Dogan's spec; both DenseNet/Xception are ImageNet-default 22
 
 class DoganTriple(Pipeline):
     name: ClassVar[str] = "dogan_triple"
+    MODEL_WEIGHT_IDENTIFIERS: ClassVar[dict[str, str]] = {
+        "densenet201": "torchvision:DenseNet201_Weights.IMAGENET1K_V1",
+        "xception": "timm:xception:pretrained",
+        "nasnet_mobile": "tf.keras.applications.NASNetMobile:imagenet",
+    }
     FREE_HYPERPARAMETERS: ClassVar[list[str]] = [
         "fine_tune",
         "lr",
@@ -61,6 +66,7 @@ class DoganTriple(Pipeline):
         "result is treated as an unverified upper bound because its split is not published."
     )
     _BACKBONE_CACHE: ClassVar[dict[str, tuple[list, object, object]]] = {}
+    _BACKBONE_CHECKSUMS: ClassVar[dict[str, dict[str, str]]] = {}
     _FEATURE_CACHE: ClassVar[dict[tuple, tuple[np.ndarray, np.ndarray]]] = {}
     _FIT_CACHE: ClassVar[dict[tuple, tuple[NeighborhoodComponentsAnalysis, SVC]]] = {}
 
@@ -104,6 +110,7 @@ class DoganTriple(Pipeline):
             self._torch_backbones = cached_torch
             self._keras_nasnet = cached_nasnet
             self._keras_preprocess = cached_preprocess
+            self._model_weight_checksums = self._BACKBONE_CHECKSUMS[self._device]
             return
 
         dn = densenet201(weights=DenseNet201_Weights.IMAGENET1K_V1)
@@ -126,6 +133,14 @@ class DoganTriple(Pipeline):
         )
         self._keras_nasnet.trainable = False  # frozen; see METHODS_SECTION_NOTES
         self._keras_preprocess = preprocess_input
+        from ..weight_checksums import keras_model_sha256, torch_module_sha256
+
+        self._model_weight_checksums = {
+            "densenet201": torch_module_sha256(dn),
+            "xception": torch_module_sha256(xc),
+            "nasnet_mobile": keras_model_sha256(self._keras_nasnet),
+        }
+        self._BACKBONE_CHECKSUMS[self._device] = self._model_weight_checksums
         if not self.fine_tune:
             self._BACKBONE_CACHE[self._device] = (
                 self._torch_backbones,
@@ -249,6 +264,11 @@ class DoganTriple(Pipeline):
     def fit(self, dataset, *, seed: int) -> None:
         self._seed = seed
         self._build_backbones()
+        if self._keras_nasnet is not None:
+            import tensorflow as tf
+
+            tf.keras.utils.set_random_seed(seed)
+            tf.config.experimental.enable_op_determinism()
         if self.fine_tune:
             self._fine_tune_torch_backbones(dataset, seed)
         fit_key = (

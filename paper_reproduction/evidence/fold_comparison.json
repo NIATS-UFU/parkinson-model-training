@@ -1,0 +1,20 @@
+{
+  "by_dataset": {
+    "folador": {
+      "subjects": 40,
+      "subjects_changed": 32
+    },
+    "hemato": {
+      "subjects": 46,
+      "subjects_changed": 35
+    },
+    "kaggle": {
+      "subjects": 28,
+      "subjects_changed": 20
+    }
+  },
+  "historical_manifest": "data/manifest_v1.parquet",
+  "historical_manifest_sha256": "fb03e2bada9210d4a9abc49e3f38ce65d2ccb2aee3c25a98a682fceeda933f72",
+  "subjects_changed": 87,
+  "subjects_compared": 114
+}

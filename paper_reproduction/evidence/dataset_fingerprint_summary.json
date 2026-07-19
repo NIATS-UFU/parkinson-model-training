@@ -1,0 +1,54 @@
+{
+  "datasets": {
+    "folador": {
+      "class_counts": {
+        "healthy": 20,
+        "parkinson": 20
+      },
+      "fold_distribution": {
+        "0": 8,
+        "1": 8,
+        "2": 8,
+        "3": 8,
+        "4": 8
+      },
+      "images": 960,
+      "sessions": 2,
+      "subjects": 40
+    },
+    "hemato": {
+      "class_counts": {
+        "healthy": 19,
+        "parkinson": 27
+      },
+      "fold_distribution": {
+        "0": 10,
+        "1": 9,
+        "2": 9,
+        "3": 9,
+        "4": 9
+      },
+      "images": 6960,
+      "sessions": 696,
+      "subjects": 46
+    },
+    "kaggle": {
+      "class_counts": {
+        "healthy": 13,
+        "parkinson": 15
+      },
+      "fold_distribution": {
+        "0": 6,
+        "1": 6,
+        "2": 6,
+        "3": 5,
+        "4": 5
+      },
+      "images": 204,
+      "sessions": null,
+      "subjects": 28
+    }
+  },
+  "fingerprint_sha256": "7a962fb6f6a0ce51f13020eef9062b5b311bdb8b1ca8909905344f88202aa6ad",
+  "total_images": 8124
+}

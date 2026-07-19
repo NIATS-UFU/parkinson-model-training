@@ -6,10 +6,16 @@ re-run only fills in what is missing. Re-running the whole catalog therefore
 converges to a complete local result directory without recomputing finished cells.
 """
 
+import hashlib
+import importlib.metadata
 import json
+import os
 import platform
 import random
-from dataclasses import dataclass
+import subprocess
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +27,17 @@ from .metrics import metrics_at_all_levels
 from .protocol import CellSpec, Pipeline
 
 _SUBJECT_CLEAN_CACHE: dict[tuple[str, int, float], pd.Series] = {}
+
+
+def contiguous_shard(items: list[Any], *, shard_count: int, shard_index: int) -> list[Any]:
+    """Return one balanced contiguous shard while preserving catalog order."""
+    if shard_count < 1:
+        raise ValueError("shard_count must be at least 1")
+    if not 0 <= shard_index < shard_count:
+        raise ValueError(f"shard_index must be in [0, {shard_count}); got {shard_index}")
+    start = len(items) * shard_index // shard_count
+    end = len(items) * (shard_index + 1) // shard_count
+    return items[start:end]
 
 
 def _task_mask(manifest: pd.DataFrame, task_filter: str) -> pd.Series:
@@ -132,7 +149,9 @@ def _recipe_kwargs_for_spec(spec: CellSpec) -> dict[str, Any]:
 
 
 def _configure_reproducibility(seed: int) -> None:
-    """Seed the libraries shared by the paper pipelines."""
+    """Seed libraries and require deterministic accelerator operations."""
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+    os.environ.setdefault("TF_DETERMINISTIC_OPS", "1")
     random.seed(seed)
     np.random.seed(seed)
 
@@ -142,39 +161,160 @@ def _configure_reproducibility(seed: int) -> None:
         return
 
     torch.manual_seed(seed)
-    torch.use_deterministic_algorithms(True, warn_only=True)
+    torch.use_deterministic_algorithms(True)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
         torch.backends.cudnn.benchmark = False
         torch.backends.cudnn.deterministic = True
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
+        torch.set_float32_matmul_precision("highest")
 
 
-def _is_cached(paths: RunPaths, cell_id: str) -> bool:
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as file:
+        for chunk in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+@lru_cache(maxsize=1)
+def _source_sha256() -> str:
+    package_root = Path(__file__).resolve().parent
+    digest = hashlib.sha256()
+    for path in sorted(package_root.rglob("*.py")):
+        digest.update(str(path.relative_to(package_root)).encode())
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+@lru_cache(maxsize=1)
+def _git_commit() -> str | None:
+    repo = Path(__file__).resolve().parents[3]
+    completed = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return completed.stdout.strip() if completed.returncode == 0 else None
+
+
+def _package_versions() -> dict[str, str | None]:
+    versions = {}
+    for name in ("numpy", "pandas", "scikit-learn", "torch", "torchvision", "timm", "tensorflow"):
+        try:
+            versions[name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            versions[name] = None
+    return versions
+
+
+def _dataset_fingerprint() -> str | None:
+    summary = Path(__file__).resolve().parents[2] / "evidence" / "dataset_fingerprint_summary.json"
+    if not summary.is_file():
+        return None
+    return json.loads(summary.read_text(encoding="utf-8")).get("fingerprint_sha256")
+
+
+def _reproducibility_payload(spec: CellSpec, paths: RunPaths) -> dict[str, Any]:
+    import torch
+
+    from .pipelines import accelerator_device, get_pipeline_class
+
+    device = accelerator_device()
+    accelerator = {
+        "device": device,
+        "cuda": torch.version.cuda,
+        "cudnn": torch.backends.cudnn.version(),
+        "device_name": torch.cuda.get_device_name(0) if device == "cuda" else None,
+    }
+    return {
+        "schema": 1,
+        "cell_spec": asdict(spec),
+        "git_commit": _git_commit(),
+        "source_sha256": _source_sha256(),
+        "manifest_sha256": _sha256_file(paths.manifest),
+        "dataset_fingerprint_sha256": _dataset_fingerprint(),
+        "packages": _package_versions(),
+        "python": platform.python_version(),
+        "platform": platform.platform(),
+        "accelerator": accelerator,
+        "model_weight_identifiers": get_pipeline_class(spec.pipeline_name).MODEL_WEIGHT_IDENTIFIERS,
+        "determinism": {
+            "seed": spec.seed,
+            "cublas_workspace_config": os.environ.get("CUBLAS_WORKSPACE_CONFIG"),
+            "torch_deterministic_algorithms": True,
+            "cudnn_benchmark": False,
+            "cudnn_deterministic": True,
+            "allow_tf32": False,
+            "tensorflow_deterministic_ops": os.environ.get("TF_DETERMINISTIC_OPS"),
+        },
+    }
+
+
+def _reproducibility_signature(payload: dict[str, Any]) -> str:
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _is_cached(paths: RunPaths, cell_id: str, cache_signature: str) -> bool:
     pred_path = paths.predictions_dir / f"{cell_id}.parquet"
     if not pred_path.is_file() or not paths.cells_path.is_file():
         return False
     cells = pd.read_parquet(paths.cells_path)
-    return bool((cells["cell_id"] == cell_id).any())
+    if "cache_signature" not in cells:
+        return False
+    return bool(((cells["cell_id"] == cell_id) & (cells["cache_signature"] == cache_signature)).any())
+
+
+@contextmanager
+def _cells_file_lock(paths: RunPaths):
+    paths.cells_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = paths.cells_path.with_suffix(".lock")
+    with lock_path.open("a+b") as lock_file:
+        if os.name == "posix":
+            import fcntl
+
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if os.name == "posix":
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def _append_cell_row(paths: RunPaths, row: dict[str, Any]) -> None:
-    df = pd.DataFrame([row])
-    if paths.cells_path.is_file():
-        existing = pd.read_parquet(paths.cells_path)
-        existing = existing[existing["cell_id"] != row["cell_id"]]
-        df = pd.concat([existing, df], ignore_index=True)
-    paths.cells_path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(paths.cells_path, index=False)
+    with _cells_file_lock(paths):
+        df = pd.DataFrame([row])
+        if paths.cells_path.is_file():
+            existing = pd.read_parquet(paths.cells_path)
+            existing = existing[existing["cell_id"] != row["cell_id"]]
+            df = pd.concat([existing, df], ignore_index=True)
+        temporary = paths.cells_path.with_name(f".{paths.cells_path.name}.{os.getpid()}.tmp")
+        try:
+            df.to_parquet(temporary, index=False)
+            os.replace(temporary, paths.cells_path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
 
 def run_cell(spec: CellSpec, paths: RunPaths, *, force: bool = False) -> dict[str, Any]:
     """Train pipeline, predict, persist predictions parquet + cells.parquet row."""
     spec.validate()
     cell_id = spec.cell_id
+    _configure_reproducibility(spec.seed)
+    provenance = _reproducibility_payload(spec, paths)
+    cache_signature = _reproducibility_signature(provenance)
 
-    if not force and _is_cached(paths, cell_id):
+    if not force and _is_cached(paths, cell_id, cache_signature):
         cells = pd.read_parquet(paths.cells_path)
-        return cells.loc[cells["cell_id"] == cell_id].iloc[0].to_dict()
+        cached = cells[(cells["cell_id"] == cell_id) & (cells["cache_signature"] == cache_signature)]
+        return cached.iloc[0].to_dict()
 
     # Lazy imports — keep the protocol surface importable without torch.
     from .data.dataset import PreprocessedSpiralDataset
@@ -209,13 +349,15 @@ def run_cell(spec: CellSpec, paths: RunPaths, *, force: bool = False) -> dict[st
     )
 
     pipeline: Pipeline = get_pipeline(spec.pipeline_name, **spec.pipeline_kwargs)
-    _configure_reproducibility(spec.seed)
 
     with ComputeMonitor() as fit_mon:
         pipeline.fit(train_ds, seed=spec.seed)
 
     with ComputeMonitor() as pred_mon:
         proba = pipeline.predict_proba(test_ds)
+
+    provenance["model_weight_checksums"] = getattr(pipeline, "_model_weight_checksums", {})
+    run_signature = _reproducibility_signature(provenance)
 
     y_true = (test_manifest["class_label"] == "parkinson").astype(int).to_numpy()
     pred_df = pd.DataFrame({
@@ -251,6 +393,9 @@ def run_cell(spec: CellSpec, paths: RunPaths, *, force: bool = False) -> dict[st
         "seed": spec.seed,
         "pipeline_kwargs": json.dumps(spec.pipeline_kwargs, sort_keys=True),
         "recipe_kwargs": json.dumps(spec.recipe_kwargs, sort_keys=True),
+        "cache_signature": cache_signature,
+        "run_signature": run_signature,
+        "run_provenance": json.dumps(provenance, sort_keys=True),
         "n_train_images": len(train_idx),
         "n_test_images": n_test,
         "n_train_subjects": int(train_manifest["subject_id"].nunique()),
@@ -262,7 +407,7 @@ def run_cell(spec: CellSpec, paths: RunPaths, *, force: bool = False) -> dict[st
         "python_version": platform.python_version(),
         "platform": platform.platform(),
         "infer_latency_ms_per_img": latency,
-        "predictions_path": str(pred_path),
+        "predictions_path": str(pred_path.relative_to(paths.outputs_dir)),
     }
     for level, m in metrics.items():
         if m is None:

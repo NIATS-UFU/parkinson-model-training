@@ -5,6 +5,7 @@ not specify are defaulted with explicit justification in METHODS_SECTION_NOTES.
 This pipeline fine-tunes a full VGG19 end-to-end and requires a GPU in practice.
 """
 
+import math
 from typing import ClassVar
 
 import numpy as np
@@ -18,10 +19,41 @@ BATCH_SIZE = 32
 T_0 = 10  # CosineAnnealingWarmRestarts; Huang did not specify — default
 T_MULT = 2  # default
 ETA_MIN = 1e-6  # default
+GRAD_MAX_NORM = 1.0  # numerical safeguard for end-to-end VGG19 fine-tuning
+
+
+def _uses_mixed_precision(device: str) -> bool:
+    # CUDA has loss scaling below. MPS does not, so full precision avoids
+    # underflowing the small gradients produced by end-to-end fine-tuning.
+    return device == "cuda"
+
+
+def _validate_gradient_norm_value(norm: float, *, recover_nonfinite: bool, epoch: int) -> None:
+    if not math.isfinite(norm):
+        if recover_nonfinite:
+            return
+        raise FloatingPointError(f"Huang VGG19 produced non-finite gradients in epoch {epoch + 1}")
+    if norm == 0.0:
+        raise RuntimeError(f"Huang VGG19 produced zero gradients in epoch {epoch + 1}; training would collapse")
+
+
+def _clip_gradients(parameters, *, recover_nonfinite: bool, epoch: int) -> None:
+    import torch
+
+    trainable = [parameter for parameter in parameters if parameter.requires_grad]
+    norm = torch.nn.utils.clip_grad_norm_(
+        trainable,
+        max_norm=GRAD_MAX_NORM,
+        error_if_nonfinite=False,
+    )
+    _validate_gradient_norm_value(float(norm), recover_nonfinite=recover_nonfinite, epoch=epoch)
 
 
 class HuangVGG19(Pipeline):
     name: ClassVar[str] = "huang_vgg19"
+    MODEL_WEIGHT_IDENTIFIERS: ClassVar[dict[str, str]] = {
+        "vgg19": "torchvision:VGG19_Weights.IMAGENET1K_V1:sha256-prefix-dcbb9e9d"
+    }
     FREE_HYPERPARAMETERS: ClassVar[list[str]] = [
         "lr",
         "batch_size",
@@ -30,6 +62,7 @@ class HuangVGG19(Pipeline):
         "T_0",
         "T_mult",
         "eta_min",
+        "gradient_max_norm",
         "rotation_degrees",
         "image_size",
         "norm_mean",
@@ -43,11 +76,13 @@ class HuangVGG19(Pipeline):
         "specify T_0, T_mult, eta_min — we default to PyTorch defaults (T_0=10, T_mult=2, "
         "eta_min=1e-6) and document. Normalization uses Huang's published mean=0.5/std=0.5 "
         "per channel (non-standard for ImageNet-pretrained VGG19, but kept faithful for "
-        "the reproduction)."
+        "the reproduction). Gradients are clipped to a maximum norm of 1.0 after AMP "
+        "unscaling to prevent unstable end-to-end updates."
     )
     _LAST_FIT_KEY: ClassVar[tuple | None] = None
     _LAST_MODEL: ClassVar[object | None] = None
     _LAST_DEVICE: ClassVar[str | None] = None
+    _PRETRAINED_CHECKSUM: ClassVar[str | None] = None
 
     def __init__(
         self,
@@ -68,6 +103,14 @@ class HuangVGG19(Pipeline):
         from torchvision.models import VGG19_Weights, vgg19
 
         model = vgg19(weights=VGG19_Weights.IMAGENET1K_V1)
+        if self._PRETRAINED_CHECKSUM is None:
+            from ..weight_checksums import torch_module_sha256
+
+            self.__class__._PRETRAINED_CHECKSUM = torch_module_sha256(model)
+        self._model_weight_checksums = {"vgg19": self._PRETRAINED_CHECKSUM}
+        # With the recipe's fixed 224x224 input, VGG19 features are already
+        # 7x7. Avoiding this no-op removes a nondeterministic CUDA backward op.
+        model.avgpool = torch.nn.Identity()
         in_features = model.classifier[-1].in_features
         model.classifier[-1] = torch.nn.Linear(in_features, 2)
         if self.freeze_features:
@@ -98,9 +141,8 @@ class HuangVGG19(Pipeline):
             self._model = self._LAST_MODEL
             self._device = self._LAST_DEVICE
             return
-        # Enable autocast on CUDA and MPS; GradScaler only on CUDA (MPS doesn't need it).
-        use_amp = self._device in ("cuda", "mps")
-        use_scaler = self._device == "cuda"
+        use_amp = _uses_mixed_precision(self._device)
+        use_scaler = use_amp
         self._model = self._build().to(self._device)
 
         optim = torch.optim.Adam((p for p in self._model.parameters() if p.requires_grad), lr=self.lr)
@@ -118,7 +160,8 @@ class HuangVGG19(Pipeline):
         )
 
         self._model.train()
-        for _epoch in tqdm(range(self.epochs), desc="huang-epoch", leave=False):
+        for epoch in tqdm(range(self.epochs), desc="huang-epoch", leave=False):
+            epoch_had_update = False
             for tensors, labels, _ in loader:
                 tensors = tensors.to(self._device, non_blocking=True)
                 labels = labels.to(self._device, non_blocking=True).long()
@@ -128,11 +171,19 @@ class HuangVGG19(Pipeline):
                     loss = loss_fn(logits, labels)
                 if use_scaler:
                     scaler.scale(loss).backward()
+                    scaler.unscale_(optim)
+                    _clip_gradients(self._model.parameters(), recover_nonfinite=True, epoch=epoch)
+                    scale_before_step = scaler.get_scale()
                     scaler.step(optim)
                     scaler.update()
+                    epoch_had_update |= scaler.get_scale() >= scale_before_step
                 else:
                     loss.backward()
+                    _clip_gradients(self._model.parameters(), recover_nonfinite=False, epoch=epoch)
                     optim.step()
+                    epoch_had_update = True
+            if not epoch_had_update:
+                raise FloatingPointError(f"Huang VGG19 produced no valid optimizer updates in epoch {epoch + 1}")
             sched.step()
         self.__class__._LAST_FIT_KEY = fit_key
         self.__class__._LAST_MODEL = self._model

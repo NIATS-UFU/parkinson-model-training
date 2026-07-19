@@ -76,12 +76,13 @@ class Pipeline(ABC):
     Subclasses declare `FREE_HYPERPARAMETERS` and `METHODS_SECTION_NOTES` as
     class variables. The length of `FREE_HYPERPARAMETERS` is what the paper's H4
     "reproducibility cost" argument counts (DINOv2=3, Folador HOG=4,
-    Dogan triple=11, Huang VGG19=12).
+    Dogan triple=11, Huang VGG19=13).
     """
 
     name: ClassVar[str]
     FREE_HYPERPARAMETERS: ClassVar[list[str]]
     METHODS_SECTION_NOTES: ClassVar[str]
+    MODEL_WEIGHT_IDENTIFIERS: ClassVar[dict[str, str]] = {}
 
     @abstractmethod
     def fit(self, dataset, *, seed: int) -> None:
