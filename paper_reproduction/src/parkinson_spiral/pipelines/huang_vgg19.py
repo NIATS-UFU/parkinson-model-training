@@ -22,29 +22,26 @@ ETA_MIN = 1e-6  # default
 GRAD_MAX_NORM = 1.0  # numerical safeguard for end-to-end VGG19 fine-tuning
 
 
-def _uses_mixed_precision(device: str) -> bool:
-    # CUDA has loss scaling below. MPS/CPU do not, so full precision avoids
-    # underflowing the small gradients produced by end-to-end fine-tuning.
-    return device == "cuda"
+# bfloat16 is the single training precision on every backend. Unlike fp16,
+# bfloat16 keeps fp32's 8-bit exponent (~1e-38 range), so gradients never
+# underflow to zero at convergence and no loss scaler is needed: forward ops run
+# in bfloat16 under autocast while parameters and gradients stay fp32. One code
+# path on CUDA, MPS and CPU.
 
 
-def _classify_gradient(norm: float, *, has_loss_scaler: bool, epoch: int) -> str:
+def _classify_gradient(norm: float, *, epoch: int) -> str:
     """Decide what a batch's clipped gradient norm means for the optimizer step.
 
     - "usable": finite and > 0 -> apply the update.
     - "skip":   a zero norm -> a benign no-op. Near convergence a perfectly-fit
-                batch has a genuinely ~0 cross-entropy gradient, and under fp16 a
-                small-but-real gradient can round to exactly 0; neither is a
-                failure. Also non-finite *when a loss scaler is present*, which
-                will back the scale off and retry that batch.
+                batch has a genuinely ~0 cross-entropy gradient; stepping on it
+                would be a wasted update, not a failure.
 
-    Only a non-finite gradient with no loss scaler to recover it (the
-    full-precision path) is fatal -- there is no way to salvage that step.
+    A non-finite gradient is fatal: bfloat16 carries fp32's range, so an inf/NaN
+    here is a real numerical breakdown, not a recoverable scaling artefact.
     """
     if math.isfinite(norm):
         return "usable" if norm > 0.0 else "skip"
-    if has_loss_scaler:
-        return "skip"
     raise FloatingPointError(f"Huang VGG19 produced non-finite gradients in epoch {epoch + 1}")
 
 
@@ -98,11 +95,15 @@ class HuangVGG19(Pipeline):
         "specify T_0, T_mult, eta_min — we default to PyTorch defaults (T_0=10, T_mult=2, "
         "eta_min=1e-6) and document. Normalization uses Huang's published mean=0.5/std=0.5 "
         "per channel (non-standard for ImageNet-pretrained VGG19, but kept faithful for "
-        "the reproduction). Gradients are clipped to a maximum norm of 1.0 after AMP "
-        "unscaling to prevent unstable end-to-end updates. A batch whose gradient "
-        "underflows to zero near convergence is skipped as a no-op rather than treated "
-        "as a failure; genuine non-convergence is detected once, after training, by "
-        "verifying the model still discriminates on its own training data."
+        "the reproduction). Training runs in bfloat16 mixed precision on every backend "
+        "(CUDA, MPS, CPU), so the numerical regime does not change with the platform. "
+        "bfloat16 shares fp32's exponent range, so gradients do not underflow near "
+        "convergence and no loss scaler is required; parameters and gradients stay fp32 "
+        "while forward ops run in bfloat16. Gradients are clipped to a maximum norm of "
+        "1.0 to prevent unstable end-to-end updates. A batch whose gradient is exactly "
+        "zero near convergence is skipped as a no-op rather than treated as a failure; "
+        "genuine non-convergence is detected once, after training, by verifying the "
+        "model still discriminates on its own training data."
     )
     _LAST_FIT_KEY: ClassVar[tuple | None] = None
     _LAST_MODEL: ClassVar[object | None] = None
@@ -166,21 +167,18 @@ class HuangVGG19(Pipeline):
             self._model = self._LAST_MODEL
             self._device = self._LAST_DEVICE
             return
-        use_amp = _uses_mixed_precision(self._device)
-        use_scaler = use_amp
         self._model = self._build().to(self._device)
 
         optim = torch.optim.Adam((p for p in self._model.parameters() if p.requires_grad), lr=self.lr)
         sched = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optim, T_0=T_0, T_mult=T_MULT, eta_min=ETA_MIN)
         loss_fn = torch.nn.CrossEntropyLoss()
-        scaler = torch.amp.GradScaler("cuda", enabled=use_scaler)
         from . import loader_kwargs
 
         loader = DataLoader(
             dataset,
             batch_size=self.batch_size,
             shuffle=True,
-            pin_memory=use_scaler,
+            pin_memory=(self._device == "cuda"),
             **loader_kwargs(),
         )
 
@@ -193,25 +191,14 @@ class HuangVGG19(Pipeline):
                 labels = labels.to(self._device, non_blocking=True).long()
                 training_labels.update(int(label) for label in labels.unique().tolist())
                 optim.zero_grad(set_to_none=True)
-                with torch.amp.autocast(self._device, enabled=use_amp):
+                with torch.amp.autocast(self._device, dtype=torch.bfloat16):
                     logits = self._model(tensors)
                     loss = loss_fn(logits, labels)
-                if use_scaler:
-                    scaler.scale(loss).backward()
-                    scaler.unscale_(optim)
-                    norm = _clip_gradients(self._model.parameters())
-                    if _classify_gradient(norm, has_loss_scaler=True, epoch=epoch) == "usable":
-                        usable_updates += 1
-                    # A zero-gradient step is a no-op and the scaler skips a
-                    # non-finite one internally; both are safe to hand to step().
-                    scaler.step(optim)
-                    scaler.update()
-                else:
-                    loss.backward()
-                    norm = _clip_gradients(self._model.parameters())
-                    if _classify_gradient(norm, has_loss_scaler=False, epoch=epoch) == "usable":
-                        optim.step()
-                        usable_updates += 1
+                loss.backward()
+                norm = _clip_gradients(self._model.parameters())
+                if _classify_gradient(norm, epoch=epoch) == "usable":
+                    optim.step()
+                    usable_updates += 1
             sched.step()
         self._assert_model_trained(dataset, usable_updates, training_labels)
         self.__class__._LAST_FIT_KEY = fit_key
