@@ -20,8 +20,9 @@ and cannot attach the original `parkinson-trainer` service account. Compute
 Engine usage is charged to `ufu-test`. Budget alerts notify the project owner but
 do not impose a hard spending limit.
 
-Hemato contains restricted clinical data. Do not copy it outside the authorized
-project or share it with another identity.
+The Moura cohort (keyed `hemato` in code and on the bucket) contains restricted
+clinical data. Do not copy it outside the authorized project or share it with
+another identity.
 
 ## 1. Install and authenticate the Google Cloud CLI
 
@@ -52,7 +53,8 @@ gcloud storage ls "$BUCKET/data/"
 gcloud storage ls "$BUCKET/runs/strict-daddb01/results/"
 ```
 
-The bucket contains Kaggle, Folador, and the authorized Hemato final folders.
+The bucket contains Zham (`kaggle`), Folador, and the authorized Moura (`hemato`)
+final folders.
 Existing results are read-only. New results must be written below:
 
 ```text

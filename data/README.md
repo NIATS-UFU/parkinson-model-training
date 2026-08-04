@@ -35,12 +35,21 @@ main-cli create-manifest niats-folador data/folador/HOG-IA-desenho-manuscrito/py
 main-cli create-manifest image-tree data/my-labelled-images data/manifests/image_tree.csv
 ```
 
-The `hemato` loader reads only `**/5_final/*` image crops. It uses the top folder under the dataset root as `subject_id` and preserves the final-crop parent folder as `drawing_session` metadata. Non-final processing folders should not be kept here.
+The `hemato` loader reads the **Moura** cohort — the NIATS-UFU clinical dataset, whose frozen key in
+code is `hemato`. It reads only `**/5_final/*` image crops. It uses the top folder under the dataset
+root as `subject_id` and preserves the final-crop parent folder as `drawing_session` metadata.
+Non-final processing folders should not be kept here.
 Example shape:
 
 ```text
 data/hemato/V13/V13_PARKINSON_RAW_DATA_drawings_9/5_final/test1_spi_centered.png
 ```
+
+This loader supports the `spiral-cropper` output tree only. The de-identified
+`moura-neto-2023-2025` release ships a `V<n>/{spiral,wave}/` tree with no `5_final/` directories, so
+pointing this loader at it raises `No image records found under: <root>`. That release layout is read
+by the separate `paper_reproduction` loader — see
+[`../paper_reproduction/docs/DATA.md`](../paper_reproduction/docs/DATA.md).
 
 The `niats-folador` loader reads either Folador layout:
 
@@ -52,12 +61,12 @@ dataset-separado/dia2/ondas/teste/higido/2_5_HO1.jpg
 It derives `subject_id` from the drawing code plus patient number, such as `PE-2` or `HO-5`, so repeated collections from different days stay grouped by participant rather than by crop.
 The `image-tree` loader is a generic fallback. It scans recursively, infers labels from path text, and uses the image parent folder as `subject_id`.
 
-## NIATS Cropper Metadata
+## Cropper Metadata
 
-The Obsidian UFU postdoc notes identify NIATS crops as the primary benchmark. The cropper metadata is available at:
+Older Moura distributions ship a single `all_metadata.parquet` alongside the crops, carrying crop
+paths and QC fields. The `paper_reproduction` loader joins it to `subject_id` and `class_label`
+automatically when it is present; see
+[`../paper_reproduction/docs/DATA.md`](../paper_reproduction/docs/DATA.md) for where to place it.
 
-```sh
-/data/git/ufu/crop_spiral_tests/output/all_metadata.parquet
-```
-
-That file has crop paths and QC fields, but it still needs a clinical join that adds `subject_id` and `label` before `parkinson-model-train` can produce meaningful NIATS metrics. Until that join exists, keep external datasets in manually curated manifests or use `image-tree` only for simple smoke tests.
+The root `main-cli` loaders above do not read that parquet — they infer everything from the directory
+layout.
