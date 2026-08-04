@@ -4,13 +4,17 @@ This repository ships **no images** and no generated result parquet files. Layer
 reproduction needs a local result directory. Layer-2 re-training needs the
 datasets placed on disk in the layout below.
 
-The paper uses three spiral-drawing datasets:
+The paper uses three spiral-drawing datasets. The paper and the code name them
+differently; the code key is frozen and is what every command and result file uses.
 
-| Name (paper) | Public? | How to obtain |
-|---|---|---|
-| `kaggle` | Yes | Public Kaggle "Parkinson's Drawings" (Zham et al.) spiral/wave set. |
-| `folador` | Yes | Folador *et al.* HOG-IA pen-and-paper handwriting dataset (`pyTremorDetect`). |
-| `hemato` | **On request** | NIATS-UFU clinical cohort. IRB-restricted; available on request — contact NIATS-UFU. |
+| Name in the paper | Key in code | Public? | How to obtain |
+|---|---|---|---|
+| Zham | `kaggle` | Yes | Public Kaggle "Parkinson's Drawings" (Zham et al.) spiral/wave set. |
+| Folador | `folador` | Yes | Folador *et al.* HOG-IA pen-and-paper handwriting dataset (`pyTremorDetect`). |
+| **Moura** | `hemato` | **On request** | NIATS-UFU clinical cohort, released as `moura-neto-2023-2025`. IRB-restricted; available on request — contact NIATS-UFU. |
+
+Read `hemato` as *Moura* throughout: the key is hashed into `cell_id`, `image_id`
+and `subject_id`, so renaming it would invalidate the published results.
 
 ## On-disk layout
 
@@ -23,37 +27,70 @@ Place the datasets under a single `<data-root>` directory:
 ├── folador/
 │   └── HOG-IA-desenho-manuscrito/pyTremorDetect/dataset-junto/...
 └── hemato/
-    └── output/
-        ├── V<n>_PARKINSON_RAW_DATA_drawings_<N>/
-        │   └── 5_final/
-        │       ├── test1_spi_centered.png
-        │       ├── test1_sen_centered.png
-        │       └── ...
-        ├── V<n>_PARKINSON_DADOS_DESENHOS_<N>/
-        │   └── 5_final/ ...
-        └── V<n>_CONTROLE_RAW_DATA_drawings_<N>/
-            └── 5_final/ ...
+    ├── V<n>/spiral/V<n>_<PARKINSON|CONTROL>_SPIRAL_<drawing>_<sheet>.png
+    └── V<n>/wave/  V<n>_<PARKINSON|CONTROL>_WAVE_<drawing>_<sheet>.png
 ```
 
-Session folders whose name does not match `V<n>_(PARKINSON|CONTROLE)_` are
-silently ignored. Each `5_final/` directory holds exactly the `*_centered.png`
-crops produced by spiral-cropper; there is no central parquet in `output/`.
+The Moura block above is the **de-identified `moura-neto-2023-2025` release** — the
+form a collaborator receives, and the layout the published run read. `subject_id`
+comes from the `V<n>` folder, drawing type from the subfolder, and the class label
+from the filename token.
+
+A filename that does not match that pattern **raises** rather than being skipped, so
+a mis-packed release fails loudly instead of silently producing a short manifest.
+The release is already de-duplicated, so no fingerprint dedup is applied to it.
 
 A dataset that is absent is simply skipped when you build the manifest, so a
-Kaggle+Folador-only `<data-root>` reproduces every non-Hemato cell.
+Zham+Folador-only `<data-root>` reproduces every cell that does not involve Moura.
 
-### Legacy Hemato layout (all_metadata.parquet)
+### Other supported Moura layouts
 
-If you have the older distribution (a single `all_metadata.parquet` file plus a
-`V<n>/V<n>_*/5_final/` nested structure), place it at:
+`build_hemato_manifest` selects a layout from what is on disk, in this order — the
+**first match wins**, so an `output/` directory takes precedence over the release
+tree:
+
+1. `hemato/output/` **without** `all_metadata.parquet` → flat spiral-cropper session scan
+2. `hemato/output/` **with** `all_metadata.parquet` → legacy parquet scan
+3. `hemato/output_v2/` → same flat scan, under the old symlink name
+4. `hemato/V<n>/{spiral,wave}/*.png` → the release image tree documented above
+5. none of the above → an empty manifest, and every Moura cell is skipped
+
+The spiral-cropper tree (1 and 3) looks like:
 
 ```
-<data-root>/hemato/output/all_metadata.parquet
+<data-root>/hemato/output/
+├── V<n>_PARKINSON_RAW_DATA_drawings_<N>/
+│   └── 5_final/
+│       ├── test1_spi_centered.png
+│       ├── test1_sen_centered.png
+│       └── ...
+├── V<n>_PARKINSON_DADOS_DESENHOS_<N>/
+│   └── 5_final/ ...
+└── V<n>_CONTROLE_RAW_DATA_drawings_<N>/
+    └── 5_final/ ...
 ```
 
-`build_hemato_manifest` detects the parquet and uses the legacy loader
-automatically. An `output_v2/` directory is also supported for backward
-compatibility with the previous symlink name.
+Here `subject_id` is the `V<n>` prefix and the drawing type comes from the filename
+(`*_spi_*` → spiral, `*_sen_*` → wave). Note the **opposite** error policy to the
+release tree: session folders whose name does not match `V<n>_(PARKINSON|CONTROLE)_`
+are *silently ignored*.
+
+For the legacy distribution (2), place the single metadata file at
+`<data-root>/hemato/output/all_metadata.parquet`; the loader detects it and joins
+`subject_id` and `class_label` automatically.
+
+### Deduplication
+
+Two mechanisms remove duplicate images, and both can make your row count differ from
+a naive file count:
+
+- **Per-subject session dedup** (cropper layouts only): a session whose `5_final/`
+  contents are byte-identical to an earlier session for the same subject is skipped
+  with a warning. This handles the same sheets being re-exported under two naming
+  conventions.
+- **Global exact-image dedup** (all datasets): byte-identical images are collapsed
+  across the whole manifest. If two identical images carry *conflicting* metadata,
+  this raises rather than picking one.
 
 ## Building the manifest
 
@@ -74,7 +111,7 @@ These invariants hold for the corrected manifest used in this release. A coworke
 re-building the manifest should verify them before running the full catalog.
 Detailed rationale for each is in [`DECISIONS.md`](DECISIONS.md).
 
-### Kaggle — 28 subjects (14 healthy + 14 parkinson)
+### Zham (`kaggle`) — 28 subjects (13 healthy + 15 parkinson)
 
 Wave filenames (`V<n>H/PO<d>.png`) must map to the same subject ID as their
 spiral counterpart (`V<n>H/PE<d>.png`). The character after the class letter is
@@ -90,21 +127,33 @@ Cross-validation folds are assigned by `StratifiedKFold` on a **one-row-per-subj
 table, then mapped back to all image rows. Each subject receives exactly one fold
 regardless of how many images they have. Image-weighted splitting (the pre-correction
 approach with `StratifiedGroupKFold` on image rows) produced unbalanced folds and
-class-ratio drift for datasets like Hemato where session counts vary widely per subject.
+class-ratio drift for datasets like Moura where session counts vary widely per subject.
 
-### Hemato — only existing image files
+### Moura (`hemato`) — only existing image files
 
 The manifest builder resolves every `final_centered_rel_path` entry to an
 absolute path and drops rows where `abs_path.is_file()` is False. The flat-output
 scanner also only writes a row for files that are actually present on disk. This
 removes stale/phantom entries that arise when session folders are reorganised between
-spiral-cropper runs. A clean `output/` manifest should contain:
+spiral-cropper runs.
 
-- **698 sessions** across all subjects
-- **6 980 image rows** (exactly 10 per session: 5 spiral + 5 wave)
+**Row and session counts are not fixed, so this document does not state one.** They
+depend on which crop you hold and which of the layouts above you use, and successive
+crops have legitimately produced different totals. Fingerprint your own copy instead:
 
-If your local count differs materially, check for missing `5_final/` directories
-or extra session folders that do not match the naming pattern.
+```bash
+python scripts/paper.py dataset-fingerprint --manifest results/manifest.parquet
+```
+
+Compare the result against the run you are trying to reproduce, rather than against a
+number written here. A collaborator who already has a reference fingerprint can check
+a copy byte-for-byte with `verify-fingerprint`.
+
+One caveat when comparing across layouts: `session_id` does not mean the same thing in
+both. The cropper layouts derive it from the **session folder**, one per physical
+sheet; the release tree sets it to `V<n>_<drawing>`, grouping by **position on the
+sheet**. Session counts from the two layouts are therefore not comparable. Every
+reported metric is subject-level, so nothing published depends on this.
 
 ## Labels
 
@@ -114,6 +163,6 @@ as the positive class. The task is always the spiral drawing (`task_filter="spir
 ## A note on the released model
 
 The released DINOv2 probe (see [`../models/MODEL_CARD.md`](../models/MODEL_CARD.md))
-is fit on 100% of Hemato. Because Hemato is IRB-restricted, you must obtain it from
+is fit on 100% of Moura. Because Moura is IRB-restricted, you must obtain it from
 NIATS-UFU to re-run `models/export_hemato_probe.py` yourself. The serialized probe
-on the Hugging Face Hub does not contain or expose any Hemato images.
+on the Hugging Face Hub does not contain or expose any Moura images.

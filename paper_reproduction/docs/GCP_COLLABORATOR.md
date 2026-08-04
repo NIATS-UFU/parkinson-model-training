@@ -200,6 +200,21 @@ stopped or preempted Spot VM can resume without recomputing completed cells.
 Running two GPU training cells simultaneously is not recommended on one T4; the
 two processes compete for the same GPU and did not improve observed throughput.
 
+### If the run exits non-zero
+
+The script above leaves the VM running on a non-zero exit so you can inspect it.
+Check `~/training.log` for one of these two messages before assuming a crash:
+
+- `Huang VGG19 produced no usable gradient in any batch; the model never trained`
+- `Huang VGG19 collapsed to a single-class predictor on its own training data`
+
+Both are **deliberate guards**, not failures of the environment. They abort a Huang
+fine-tune that finished but produced no usable model, so that a collapsed run cannot
+be mistaken for a result. Re-launch the same run ID: caching means only the failed
+cell is recomputed. See [`REPRODUCE.md`](REPRODUCE.md) for details.
+
+Any other non-zero exit is a genuine error — check the log before restarting.
+
 Monitor from the VM:
 
 ```bash

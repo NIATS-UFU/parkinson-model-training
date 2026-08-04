@@ -65,7 +65,19 @@ python scripts/paper.py build-manifest --data-root <path-with-kaggle-folador-hem
 ```
 
 A dataset that is absent is skipped by `scripts/paper.py reproduce`, so you can build a
-Kaggle+Folador-only manifest and reproduce every cell that does not involve Hemato.
+Zham+Folador-only manifest and reproduce every cell that does not involve Moura (the
+`hemato` key).
+
+To confirm your copy of the data is the one a given run used:
+
+```bash
+python scripts/paper.py dataset-fingerprint --manifest results/manifest.parquet
+python scripts/paper.py verify-fingerprint --manifest results/manifest.parquet
+```
+
+`dataset-fingerprint` hashes every image and writes `evidence/dataset_fingerprint.csv`
+plus a summary; `verify-fingerprint` checks a local copy against a reference
+fingerprint byte-for-byte. Run these before a long reproduction rather than after.
 
 ### 2. Re-run the catalog
 
@@ -75,8 +87,40 @@ python scripts/paper.py reproduce --manifest results/manifest.parquet --out resu
 python scripts/paper.py verify-catalog --results results          # cell_ids match the catalog
 ```
 
-`--pipeline <name>` restricts the run to one pipeline (repeatable); `--force`
-recomputes even cached cells.
+> **`reproduce --out` defaults to `runs/reproduce`, not `results/`.** Every example
+> here passes `--out results` explicitly. If you omit it, predictions land in
+> `runs/reproduce` and a later `verify-catalog --results results` reports every cell
+> missing.
+
+Selection and sharding flags:
+
+| Flag | Effect |
+|---|---|
+| `--pipeline <name>` | restrict to one pipeline; repeatable |
+| `--cell-id <id>` | restrict to exact catalog cell ids; repeatable |
+| `--shard-count N` / `--shard-index I` | split the selected cells into `N` contiguous shards and run the zero-based shard `I` |
+| `--dry-run` | list the selected cells and exit without training |
+| `--force` | recompute even cached cells |
+
+Sharding is how a 97-cell run is split across machines: launch the same command on
+each host with the same `--shard-count` and a different `--shard-index`, then merge
+the output directories. Because runs are keyed by `cell_id`, the shards cannot
+collide.
+
+### Tuning DataLoader workers
+
+`SPIRAL_NUM_WORKERS` overrides the platform worker policy unconditionally. The
+default picks a safe value per OS — `spawn` platforms and Python 3.14+ get fewer
+workers, and pipelines that make large BLAS calls force single-process loading on
+Linux to avoid an OpenBLAS fork deadlock. Set the variable only to force a specific
+count or to reproduce that deadlock deliberately.
+
+### Other subcommands
+
+- `freeze-evidence` — refreeze the manifest, folds, environment and artifact
+  checksums under `evidence/`. This rewrites provenance artifacts, so run it as a
+  deliberate act when publishing a run, not as part of a routine reproduction.
+- `dataset-fingerprint`, `verify-fingerprint` — see step 1 above.
 
 ### Which experiments need a GPU
 
@@ -87,9 +131,28 @@ recomputes even cached cells.
 | `dogan_triple` | three frozen public backbones + NCA + linear SVM | **Mixed** — PyTorch extraction uses MPS/CUDA; TensorFlow NASNetMobile may remain on CPU |
 | `huang_vgg19` | VGG19 end-to-end fine-tune, 50 epochs | **Yes** |
 
-CPU-only reproduction (DINOv2 + Folador HOG + Dogan-on-Hemato) covers the paper's
+CPU-only reproduction (DINOv2 + Folador HOG + Dogan-on-Moura) covers the paper's
 central H2/H4 story; the GPU pipelines are needed for the literature in-domain
 ceilings and the full 3×3 matrices of Huang/Dogan.
+
+### Huang VGG19 failure modes
+
+`huang_vgg19` checks, **after** training finishes, that the run actually produced a
+model. Two conditions abort the cell with a non-zero exit:
+
+| Error | Meaning |
+|---|---|
+| `Huang VGG19 produced no usable gradient in any batch; the model never trained` | every batch's gradient was unusable, so no weight update ever landed |
+| `Huang VGG19 collapsed to a single-class predictor on its own training data` | training completed, but the model predicts one class for its own training set |
+
+**Both are guards, not crashes.** They exist because a collapsed fine-tune otherwise
+produces plausible-looking but meaningless numbers. A single underflowed batch is
+benign and expected near convergence under mixed precision — the check is at the
+model level precisely so that normal underflow does not trip it.
+
+If either fires, the cell has no valid result: re-run it rather than treating the
+partial output as a finding. The run is idempotent, so re-running skips every cell
+that already succeeded.
 
 On Apple Silicon, the PyTorch portions of DINOv2, Huang VGG19, and Dogan
 automatically use the Metal Performance Shaders (`mps`) backend. CUDA mixed
