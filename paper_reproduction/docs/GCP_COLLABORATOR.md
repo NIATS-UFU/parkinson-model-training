@@ -203,15 +203,22 @@ two processes compete for the same GPU and did not improve observed throughput.
 ### If the run exits non-zero
 
 The script above leaves the VM running on a non-zero exit so you can inspect it.
-Check `~/training.log` for one of these two messages before assuming a crash:
+Check `~/training.log` for one of these three messages before assuming a crash.
+
+**`CUDA is required to run: …`** — the run aborted immediately, before any training.
+The T4 is not visible to PyTorch. This is the guard that stops a catalog from silently
+training on CPU for days. Run `nvidia-smi`: if it reports no device, the Spot VM lost
+its GPU or the driver did not install, so recreate the VM (step 3). If `nvidia-smi`
+works, the message will instead say the installed torch is a CPU-only build —
+reinstall from `requirements-lock.txt` as in step 4. There is no override flag.
 
 - `Huang VGG19 produced no usable gradient in any batch; the model never trained`
 - `Huang VGG19 collapsed to a single-class predictor on its own training data`
 
-Both are **deliberate guards**, not failures of the environment. They abort a Huang
-fine-tune that finished but produced no usable model, so that a collapsed run cannot
-be mistaken for a result. Re-launch the same run ID: caching means only the failed
-cell is recomputed. See [`REPRODUCE.md`](REPRODUCE.md) for details.
+Both of these are **deliberate guards**, not failures of the environment. They abort a
+Huang fine-tune that finished but produced no usable model, so that a collapsed run
+cannot be mistaken for a result. Re-launch the same run ID: caching means only the
+failed cell is recomputed. See [`REPRODUCE.md`](REPRODUCE.md) for details.
 
 Any other non-zero exit is a genuine error — check the log before restarting.
 

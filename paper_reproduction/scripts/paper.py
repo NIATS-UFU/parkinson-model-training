@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import parkinson_spiral.analysis as A  # noqa: E402
 from parkinson_spiral.catalog import EXPECTED_N_CELLS, all_cells  # noqa: E402
 from parkinson_spiral.pipelines import get_pipeline_class  # noqa: E402
+from parkinson_spiral.protocol import CellSpec  # noqa: E402
 from parkinson_spiral.runner import RunPaths, contiguous_shard, run_cell  # noqa: E402
 
 SOURCES = ("kaggle", "folador", "hemato")
@@ -85,6 +86,64 @@ def build_manifest_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cuda_requirement_error(
+    *,
+    gpu_pipelines: list[str],
+    cuda_available: bool,
+    torch_cuda_version: str | None,
+) -> str | None:
+    """Pure decision behind `_require_cuda`: the abort message, or None to proceed.
+
+    Kept separate from the host reads so every branch is testable on a machine
+    without a GPU. The two causes need different fixes, so they are reported apart:
+    a CPU-only wheel is a reinstall, a missing device is a driver problem.
+    """
+    if not gpu_pipelines or cuda_available:
+        return None
+    if torch_cuda_version is None:
+        cause = (
+            "the installed torch is a CPU-only build (torch.version.cuda is None). Reinstall the "
+            "CUDA build with `python -m pip install -r requirements-lock.txt`."
+        )
+    else:
+        cause = (
+            f"torch is built against CUDA {torch_cuda_version} but no device is visible. "
+            "Check that a GPU is attached and the driver is installed (`nvidia-smi`)."
+        )
+    return (
+        f"CUDA is required to run: {', '.join(gpu_pipelines)}. {cause}\n"
+        "These pipelines train on the GPU and take days on CPU, so they abort instead of falling "
+        "back silently. To run only the CPU pipelines, pass "
+        "`--pipeline dinov2_probe --pipeline folador_hog`."
+    )
+
+
+def _require_cuda(cells: list[CellSpec]) -> None:
+    """Abort before any training if a selected cell needs a GPU and CUDA is absent."""
+    gpu_pipelines = sorted({cell.pipeline_name for cell in cells} & GPU_PIPELINES)
+    if not gpu_pipelines:
+        return
+
+    # Imported here, not at module scope, so Layer-1 commands keep working without
+    # the training extras installed. `parkinson_spiral` is already imported above,
+    # so the determinism environment variables are set before CUDA initialises.
+    try:
+        import torch
+    except ImportError:
+        raise SystemExit(
+            f"CUDA is required to run: {', '.join(gpu_pipelines)}, but torch is not installed. "
+            'Install the training extra with `python -m pip install -e ".[train]"`.'
+        ) from None
+
+    message = _cuda_requirement_error(
+        gpu_pipelines=gpu_pipelines,
+        cuda_available=torch.cuda.is_available(),
+        torch_cuda_version=torch.version.cuda,
+    )
+    if message is not None:
+        raise SystemExit(message)
+
+
 def reproduce_command(args: argparse.Namespace) -> int:
     """Run the selected experiment cells from the catalog."""
     cells = all_cells()
@@ -128,6 +187,7 @@ def reproduce_command(args: argparse.Namespace) -> int:
     cells = runnable
     if not cells:
         raise SystemExit("no selected cells can run with the datasets present in the manifest")
+    _require_cuda(cells)
 
     paths = RunPaths(manifest=args.manifest, outputs_dir=args.out)
     for i, spec in enumerate(cells, 1):

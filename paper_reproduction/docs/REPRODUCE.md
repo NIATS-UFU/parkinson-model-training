@@ -128,12 +128,22 @@ count or to reproduce that deadlock deliberately.
 |---|---|---|
 | `dinov2_probe` | frozen public backbone → features → one logistic fit | **No** (CPU fine) |
 | `folador_hog` | deterministic HOG features → SVM/RFC/KNN/CNN1D head | **No** |
-| `dogan_triple` | three frozen public backbones + NCA + linear SVM | **Mixed** — PyTorch extraction uses MPS/CUDA; TensorFlow NASNetMobile may remain on CPU |
-| `huang_vgg19` | VGG19 end-to-end fine-tune, 50 epochs | **Yes** |
+| `dogan_triple` | three frozen public backbones + NCA + linear SVM | **CUDA required** — the TensorFlow NASNetMobile branch may still run on CPU |
+| `huang_vgg19` | VGG19 end-to-end fine-tune, 50 epochs | **CUDA required** |
 
-CPU-only reproduction (DINOv2 + Folador HOG + Dogan-on-Moura) covers the paper's
-central H2/H4 story; the GPU pipelines are needed for the literature in-domain
-ceilings and the full 3×3 matrices of Huang/Dogan.
+**The requirement is enforced, not advisory.** If a selected cell uses `huang_vgg19`
+or `dogan_triple` and `torch.cuda.is_available()` is False, `reproduce` aborts with a
+non-zero exit *before training starts* rather than falling back to CPU, where the
+catalog takes days instead of hours. The message distinguishes the two causes — a
+CPU-only torch wheel (`torch.version.cuda is None`) versus no visible device — because
+they need different fixes. There is no override flag.
+
+The two CPU pipelines are unaffected: `--pipeline dinov2_probe --pipeline folador_hog`
+runs anywhere, and `--dry-run` lists the full catalog on any machine.
+
+CPU-only reproduction (DINOv2 + Folador HOG) covers the paper's central H2/H4 story;
+the GPU pipelines are needed for the literature in-domain ceilings and the full 3×3
+matrices of Huang/Dogan.
 
 ### Huang VGG19 failure modes
 
@@ -154,11 +164,10 @@ If either fires, the cell has no valid result: re-run it rather than treating th
 partial output as a finding. The run is idempotent, so re-running skips every cell
 that already succeeded.
 
-On Apple Silicon, the PyTorch portions of DINOv2, Huang VGG19, and Dogan
-automatically use the Metal Performance Shaders (`mps`) backend. CUDA mixed
-precision remains disabled on MPS. Dogan's TensorFlow NASNetMobile branch uses
-whatever TensorFlow device support is installed and may remain on CPU unless a
-compatible TensorFlow Metal plugin is configured separately.
+On Apple Silicon, `dinov2_probe` still uses the Metal Performance Shaders (`mps`)
+backend automatically. `huang_vgg19` and `dogan_triple` do **not** — the CUDA
+requirement above means they refuse to run on an MPS-only host, so earlier macOS
+reproductions of those two pipelines are no longer possible through this CLI.
 
 The notebook splits this for you: **Section 1** runs the CPU-only subset, and
 **Section 2** runs the GPU pipelines behind a `torch.cuda.is_available()` guard.
