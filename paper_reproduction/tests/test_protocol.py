@@ -2,13 +2,14 @@
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 from parkinson_spiral import DEFAULT_SEED
 from parkinson_spiral.data.hemato import build_hemato_manifest
 from parkinson_spiral.data.kaggle import _subject_id
 from parkinson_spiral.data.splits import assign_subject_folds
-from parkinson_spiral.protocol import CellSpec
+from parkinson_spiral.protocol import CellSpec, Pipeline
 
 
 def _spec(**over):
@@ -150,3 +151,24 @@ def test_fold_assignment_gives_each_subject_exactly_one_fold():
     assert folded.groupby("subject_id")["cv_fold"].nunique().eq(1).all()
     subject_folds = folded[["subject_id", "class_label", "cv_fold"]].drop_duplicates()
     assert sorted(subject_folds.groupby("cv_fold")["subject_id"].size().tolist()) == [5, 6]
+
+
+def test_fit_was_cached_defaults_to_false():
+    """A pipeline that trains reports an honest fit, so its timing counts as real.
+
+    The harness records this flag per cell. Defaulting to True would silently
+    exclude every genuine fit from the cost table.
+    """
+
+    class AlwaysTrains(Pipeline):
+        name = "always_trains"
+        FREE_HYPERPARAMETERS = []
+        METHODS_SECTION_NOTES = ""
+
+        def fit(self, dataset, *, seed: int) -> None:
+            pass
+
+        def predict_proba(self, dataset):
+            return np.zeros((1, 2))
+
+    assert AlwaysTrains().fit_was_cached is False

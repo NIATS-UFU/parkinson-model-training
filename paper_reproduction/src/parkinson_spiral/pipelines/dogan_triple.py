@@ -283,7 +283,9 @@ class DoganTriple(Pipeline):
         )
         if not self.fine_tune and fit_key in self._FIT_CACHE:
             self._nca, self._svm = self._FIT_CACHE[fit_key]
+            self.fit_was_cached = True
             return
+        self.fit_was_cached = False
         X, y = self._extract(dataset)
         n_components = max(1, int(round(self.ncomponents_pct * X.shape[1])))
         self._nca = NeighborhoodComponentsAnalysis(n_components=n_components, random_state=seed)

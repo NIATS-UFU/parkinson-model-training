@@ -5,6 +5,8 @@ Usage:
     python scripts/paper.py reproduce --manifest results/manifest.parquet --out results
     python scripts/paper.py regenerate --results results --out paper_artifacts
     python scripts/paper.py verify-catalog --results results
+    python scripts/paper.py export-embeddings --manifest results/manifest.parquet \
+        --out results/embeddings.parquet
 """
 
 import argparse
@@ -953,6 +955,100 @@ def verify_fingerprint_command(args: argparse.Namespace) -> int:
     return 0
 
 
+EMBEDDING_METADATA_COLUMNS = (
+    "image_id",
+    "dataset",
+    "subject_id",
+    "session_id",
+    "drawing_type",
+    "class_label",
+    "cv_fold",
+)
+
+
+def build_embedding_frame(
+    manifest: pd.DataFrame,
+    features: np.ndarray,
+    labels: np.ndarray,
+) -> pd.DataFrame:
+    """Join extracted feature vectors onto their manifest rows, one row per image.
+
+    Pure, so the two ways this can silently go wrong are testable without loading
+    a backbone. The extractor's DataLoader runs unshuffled, so row i of `features`
+    must be manifest row i; comparing the labels it emitted against the manifest's
+    own is what checks that the correspondence actually held.
+    """
+    from parkinson_spiral.data.dataset import CLASS_LABEL_TO_INT
+
+    if len(features) != len(manifest):
+        raise ValueError(f"extractor returned {len(features)} vectors for {len(manifest)} images")
+    expected = manifest["class_label"].map(CLASS_LABEL_TO_INT).to_numpy()
+    if not np.array_equal(labels, expected):
+        raise ValueError("extracted labels do not follow the manifest order; the embeddings are unusable")
+
+    return pd.concat(
+        [
+            manifest[list(EMBEDDING_METADATA_COLUMNS)].reset_index(drop=True),
+            pd.DataFrame(features, columns=[f"f{i:03d}" for i in range(features.shape[1])]),
+        ],
+        axis=1,
+    )
+
+
+def export_embeddings_command(args: argparse.Namespace) -> int:
+    """Export the frozen DINOv2 CLS embedding of every manifest image.
+
+    Runs the released `DinoV2Probe` feature extractor unchanged, so the vectors
+    written here are exactly the ones the published probe is fitted on. That
+    identity is the point: features from a reimplementation would describe a
+    different model than the paper reports.
+    """
+    from parkinson_spiral.data.dataset import PreprocessedSpiralDataset
+    from parkinson_spiral.pipelines.dinov2_probe import DinoV2Probe
+    from parkinson_spiral.recipes import get_recipe
+
+    if not args.manifest.is_file():
+        print(f"ERROR: manifest not found: {args.manifest}", file=sys.stderr)
+        return 1
+
+    manifest = pd.read_parquet(args.manifest)
+    if args.task_filter != "both":
+        manifest = manifest[manifest["drawing_type"] == args.task_filter]
+    manifest = manifest.reset_index(drop=True)
+    if manifest.empty:
+        raise SystemExit(f"no manifest rows left after task filter {args.task_filter!r}")
+
+    recipe = get_recipe(args.recipe)
+    dataset = PreprocessedSpiralDataset(manifest, recipe, is_train=False)
+    probe = DinoV2Probe(vit_size=args.vit_size, batch_size=args.batch_size)
+    print(f"extracting {len(manifest)} embeddings with dinov2_{args.vit_size} under {args.recipe}...")
+    features, labels = probe._extract(dataset)  # noqa: SLF001 -- the released path is the point
+    frame = build_embedding_frame(manifest, features, labels)
+
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    frame.to_parquet(args.out, index=False)
+
+    sidecar = {
+        "backbone": f"dinov2_{args.vit_size}",
+        "backbone_weight_checksums": getattr(probe, "_model_weight_checksums", {}),
+        "recipe": args.recipe,
+        "image_size": recipe.meta.image_size,
+        "task_filter": args.task_filter,
+        "embedding_dim": int(features.shape[1]),
+        "n_images": int(len(frame)),
+        "n_subjects": int(frame["subject_id"].nunique()),
+        "images_per_dataset": frame.groupby("dataset").size().to_dict(),
+        "manifest_sha256": _sha256(args.manifest),
+    }
+    sidecar_path = args.out.with_suffix(".json")
+    sidecar_path.write_text(json.dumps(sidecar, indent=2, sort_keys=True), encoding="utf-8")
+
+    print(f"wrote {len(frame)} x {features.shape[1]}-d embeddings -> {args.out}")
+    print(f"metadata -> {sidecar_path}")
+    print(f"datasets: {sidecar['images_per_dataset']}, subjects: {sidecar['n_subjects']}")
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     repo = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
@@ -998,6 +1094,28 @@ def _build_parser() -> argparse.ArgumentParser:
     fingerprint.add_argument("--manifest", type=Path, default=repo / "results" / "manifest.parquet")
     fingerprint.add_argument("--out", type=Path, default=repo / "evidence")
     fingerprint.set_defaults(func=dataset_fingerprint_command)
+
+    export_emb = sub.add_parser(
+        "export-embeddings",
+        help="export frozen DINOv2 CLS embeddings for every manifest image",
+    )
+    export_emb.add_argument("--manifest", type=Path, default=repo / "results" / "manifest.parquet")
+    export_emb.add_argument("--out", type=Path, default=repo / "results" / "embeddings.parquet")
+    export_emb.add_argument(
+        "--task-filter",
+        default="spiral",
+        choices=["spiral", "wave", "both"],
+        help="which drawing type to embed (default: spiral, the benchmark's task)",
+    )
+    export_emb.add_argument(
+        "--recipe",
+        default="AUG-None",
+        choices=["AUG-None", "AUG-Huang", "AUG-Dogan"],
+        help="preprocessing recipe; AUG-None is the deterministic resize+normalize the probe uses",
+    )
+    export_emb.add_argument("--vit-size", default="vitb14", choices=["vits14", "vitb14", "vitl14", "vitg14"])
+    export_emb.add_argument("--batch-size", type=int, default=32)
+    export_emb.set_defaults(func=export_embeddings_command)
 
     verify_fp = sub.add_parser(
         "verify-fingerprint",

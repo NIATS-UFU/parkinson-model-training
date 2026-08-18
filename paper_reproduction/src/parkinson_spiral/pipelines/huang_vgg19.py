@@ -165,7 +165,9 @@ class HuangVGG19(Pipeline):
         if self._LAST_FIT_KEY == fit_key and self._LAST_MODEL is not None:
             self._model = self._LAST_MODEL
             self._device = self._LAST_DEVICE
+            self.fit_was_cached = True
             return
+        self.fit_was_cached = False
         use_amp = _uses_mixed_precision(self._device)
         use_scaler = use_amp
         self._model = self._build().to(self._device)
