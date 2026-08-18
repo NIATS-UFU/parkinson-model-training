@@ -1,16 +1,32 @@
-# Parkinson Model Train
+# Parkinson Model Training
 
-[![on-merge](https://github.com/NIATS-UFU/parkinson-model-train/actions/workflows/on_merge.yaml/badge.svg)](https://github.com/NIATS-UFU/parkinson-model-train/actions/workflows/on_merge.yaml)
+[![on-merge](https://github.com/NIATS-UFU/parkinson-model-training/actions/workflows/on_merge.yaml/badge.svg)](https://github.com/NIATS-UFU/parkinson-model-training/actions/workflows/on_merge.yaml)
 [![ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 ![Python](https://img.shields.io/badge/python-3.13-blue.svg)
 
 Training repo for the NIATS Parkinson drawing baseline: spiral/wave crops from [`spiral-cropper`](https://github.com/NIATS-UFU/spiral-cropper) go into a frozen DINO/DINOv2 encoder, then a supervised linear classifier is trained with subject-level splits.
 
-- **Repository:** <https://github.com/NIATS-UFU/parkinson-model-train>
+- **Repository:** <https://github.com/NIATS-UFU/parkinson-model-training>
 - **CLI entry point:** `main-cli`
 - **Main assumption:** split by subject, not by image, to avoid leakage.
 - **Training guide:** [`docs/training_walkthrough.md`](docs/training_walkthrough.md)
 - **Colab notebook:** [`notebooks/colab_training.ipynb`](notebooks/colab_training.ipynb)
+- **Paper reproduction:** [`paper_reproduction/`](paper_reproduction/README.md) — a self-contained
+  package that reproduces the published cross-dataset benchmark, with its own environment and docs.
+
+### Dataset names
+
+The manuscript and this codebase name the same datasets differently. Documentation uses the paper's
+name; commands and paths use the key verbatim.
+
+| Key in code | Name in the paper |
+|---|---|
+| `kaggle` | Zham |
+| `folador` | Folador |
+| `hemato` | **Moura** — the NIATS-UFU clinical cohort, released as `moura-neto-2023-2025` |
+
+`hemato` is a frozen identifier baked into published result files and the released model artifact; it
+is never renamed. Read the cohort's name as *Moura* wherever the token appears.
 
 ## Quick Start
 
@@ -106,9 +122,22 @@ Useful options:
 - `--model-name`: any compatible `timm` model; default is `vit_small_patch14_dinov2`
 - `--image-size`: input resize size. Use `518` for `vit_small_patch14_dinov2` with current timm builds.
 - `--device`: `auto`, `cpu`, `cuda`, `mps`, or a Torch device string. On Apple Silicon, `auto` selects Metal Performance Shaders (MPS) when available.
-- `--learning-rate`: AdamW learning rate for the classifier head
+- `--learning-rate`, `--weight-decay`: AdamW settings for the classifier head
 - `--val-fraction`, `--test-fraction`, `--seed`: subject-level split controls
 - `--num-workers`: PyTorch DataLoader worker count
+
+Augmentation is applied to training images only, and is **on by default**. Pass `--no-augment` to
+disable it entirely, or tune it with:
+
+- `--rotation-degrees`: maximum random rotation, in degrees (default `10.0`)
+- `--crop-scale-min`: minimum random-crop area fraction (default `0.9`)
+- `--crop-ratio-min`, `--crop-ratio-max`: random-crop aspect-ratio bounds (defaults `0.95`, `1.05`)
+- `--blur-probability`, `--blur-kernel-size`: slight Gaussian blur (defaults `0.1`, `3`; kernel must be odd)
+- `--jitter-probability`, `--brightness-jitter`, `--contrast-jitter`: mild photometric jitter
+  (defaults `0.2`, `0.08`, `0.08`)
+
+The settings actually used are recorded in the checkpoint, so a run stays interpretable after the
+fact.
 
 Create manifests from local dataset layouts:
 
@@ -118,17 +147,20 @@ main-cli create-manifest niats-folador data/folador/HOG-IA-desenho-manuscrito/py
 main-cli create-manifest image-tree data/my-labelled-images data/manifests/image_tree.csv
 ```
 
-`hemato` is the primary final-crop loader when you already have `5_final/` outputs from `spiral-cropper`.
+`hemato` loads the Moura cohort from `spiral-cropper` `5_final/` outputs, and is the primary
+final-crop loader when you already have them.
 `niats-folador` is the concise example for the Folador folder layout under `dataset-junto/` or `dataset-separado/`.
 `image-tree` is the small generic fallback for labelled image folders when a custom manifest is not worth writing.
 
-The NIATS cropper metadata at `/data/git/ufu/crop_spiral_tests/output/all_metadata.parquet` still needs to be joined with `subject_id` and clinical `label` before it can be used for the primary benchmark.
+This root loader reads `**/5_final/*` crops only. The `moura-neto-2023-2025` de-identified release
+ships a different tree and is read by the `paper_reproduction` loader instead — see
+[`paper_reproduction/docs/DATA.md`](paper_reproduction/docs/DATA.md).
 
 ## Outputs
 
 Training writes to the selected output directory:
 
-- `best_classifier.pt`: classifier checkpoint, label mapping, image size, model name, and validation metrics
+- `best_classifier.pt`: classifier checkpoint, label mapping, image size, model name, augmentation settings, epoch, and validation metrics
 - `run_summary.json`: split counts, subject counts, label mapping, and test metrics
 - `test_metrics.svg`, `split_counts.svg`, `validation_history.svg`: standalone plots for quick inspection
 

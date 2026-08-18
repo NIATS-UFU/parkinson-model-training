@@ -1,4 +1,4 @@
-# OpenRAIL-M License — DINOv2 + Hemato spiral Parkinson's probe
+# OpenRAIL-M License — DINOv2 + Moura spiral Parkinson's probe
 
 **Open Responsible AI License (Model variant).** This license applies to the
 **trained model artifact** released with the paper *"Cross-Dataset Robustness of
@@ -10,7 +10,8 @@ DINOv2 backbone, which is governed by its own upstream license
 (`facebookresearch/dinov2`).
 
 > **Status: pending data-steward approval.** Because this model is derived from
-> IRB-restricted clinical data (the Hemato cohort), this license is the *proposed*
+> IRB-restricted clinical data (the Moura cohort, keyed `hemato` in the artifact
+> filenames above), this license is the *proposed*
 > licensing terms and must be confirmed by the NIATS-UFU data stewards before the
 > model is published. Do not redistribute the model until that confirmation is in
 > place.

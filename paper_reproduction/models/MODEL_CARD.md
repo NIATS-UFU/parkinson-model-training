@@ -15,14 +15,17 @@ tags:
 pipeline_tag: image-classification
 ---
 
-# DINOv2 + Hemato linear probe — spiral Parkinson's classifier (reference checkpoint)
+# DINOv2 + Moura linear probe — spiral Parkinson's classifier (reference checkpoint)
 
 A logistic-regression **linear probe** on top of a **frozen, public DINOv2
-ViT-B/14** backbone, fit on 100% of the **Hemato** clinical spiral-drawing cohort.
+ViT-B/14** backbone, fit on 100% of the **Moura** clinical spiral-drawing cohort.
 This is the trained artifact released with *"Cross-Dataset Robustness of Spiral
 Classifiers for Parkinson's Disease Diagnosis."* It is the paper's H4 novelty: a
 competitive in-domain classifier that needs **no fine-tuning** and only three
 configuration choices.
+
+> The Moura cohort is keyed `hemato` throughout the code and in this artifact's
+> filenames. The key is frozen, so it appears verbatim below; read it as *Moura*.
 
 **What is and isn't in this repo.** The backbone is *not* included — it is the
 public `facebookresearch/dinov2` `dinov2_vitb14`, downloaded at run time and never
@@ -34,15 +37,15 @@ trained by us. The only artifact here is the ~KB scikit-learn probe
 This is a **reference / exploration checkpoint** for researchers, released so the
 frozen-DINOv2 direction can be explored in future work — **not** a screening or
 diagnostic tool. The companion paper's central finding (H2) is that spiral
-classifiers, including this one, **do not transfer across datasets**: a Hemato-fit
+classifiers, including this one, **do not transfer across datasets**: a Moura-fit
 probe degrades on other cohorts and off-domain probes collapse to near-chance on
-Hemato. Do **not** apply this probe to non-Hemato images and expect calibrated
-results, and do **not** use it for any clinical decision.
+Moura. Do **not** apply this probe to images from another cohort and expect
+calibrated results, and do **not** use it for any clinical decision.
 
 ## How to use
 
-```python
-# pip install -e ".[train,hf]"  (from the paper_reproduction/ code release)
+```sh
+pip install -e ".[train,hf]"   # from the paper_reproduction/ code release
 python models/predict.py --model-dir <this folder> --images path/to/spirals/
 ```
 
@@ -71,14 +74,14 @@ ImageNet normalization, RGB). Output column 1 is P(Parkinson's). CPU is sufficie
 
 ## Training data
 
-100% of the Hemato spiral images (no holdout). Hemato is an IRB-restricted clinical
+100% of the Moura spiral images (no holdout). Moura is an IRB-restricted clinical
 cohort collected at NIATS-UFU and is **not** publicly distributed; it is available
 on request (see the code release `docs/DATA.md`). Labels are subject-level
 Parkinson's-vs-control.
 
 ## Evaluation
 
-Pooled out-of-fold 5-fold participant-grouped CV on Hemato (the value this
+Pooled out-of-fold 5-fold participant-grouped CV on Moura (the value this
 all-data probe is calibrated to reproduce): **subject accuracy 0.739**, AUC 0.752.
 Cross-dataset transfer is poor by design of the finding — see the paper's Table
 "cross-dataset" and Fig. "matrix".
@@ -91,8 +94,9 @@ Cross-dataset transfer is poor by design of the finding — see the paper's Tabl
 
 ## License
 
-**OpenRAIL-M with an added no-clinical-use restriction** — see the [`LICENSE`](LICENSE)
-file in this folder for the full terms. It is a permissive Responsible AI License:
+**OpenRAIL-M with an added no-clinical-use restriction** — see
+[`MODEL_LICENSE.md`](MODEL_LICENSE.md) for the full terms; the export step ships it
+alongside this card as `LICENSE`. It is a permissive Responsible AI License:
 broad rights to use and build on the probe, subject to use restrictions that must be
 passed on to downstream users. The key added restriction (Attachment A.1) **forbids
 using the model for clinical, diagnostic, or screening purposes** unless the
@@ -101,7 +105,7 @@ authority — which makes the "reference checkpoint, not a diagnostic tool" stat
 above a binding term rather than a disclaimer.
 
 This choice reflects the model's clinical provenance (it is derived from the
-IRB-restricted Hemato cohort). **Pending sign-off:** the NIATS-UFU data stewards must
+IRB-restricted Moura cohort). **Pending sign-off:** the NIATS-UFU data stewards must
 confirm these terms — and that the IRB/consent permits redistributing a derived model
 at all — before this model is published. The repository code is licensed separately
 under MIT.

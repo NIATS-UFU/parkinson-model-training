@@ -30,6 +30,10 @@ If you only want to check the environment after installation:
 uv run --all-groups pytest
 ```
 
+That runs the root suite only (`testpaths = ["tests"]`). The `paper_reproduction` package lives in a
+separate environment with its own tests; run both with `make test`, or that suite alone with
+`make paper-reproduction-test`.
+
 ## 2. Create A Manifest
 
 The package trains from a normalized CSV manifest. Each row is one image, with a participant-level identifier used for leakage-safe splitting.
@@ -54,7 +58,9 @@ main-cli create-manifest niats-folador data/folador/HOG-IA-desenho-manuscrito/py
 main-cli create-manifest image-tree data/my-labelled-images data/manifests/image_tree.csv
 ```
 
-Use `hemato` for final `5_final/` crop trees. Use `niats-folador` for the Folador NIATS folder layouts. Use `image-tree` only for simple labelled folder trees where the parent folder can safely serve as the subject ID.
+Use `hemato` for final `5_final/` crop trees — that key loads the **Moura** cohort, the NIATS-UFU
+clinical dataset. Use `niats-folador` for the Folador NIATS folder layouts. Use `image-tree` only for
+simple labelled folder trees where the parent folder can safely serve as the subject ID.
 
 ## 3. Validate The Manifest
 
@@ -132,11 +138,18 @@ Expected summary shape:
   },
   "test_metrics": {
     "loss": 0.69,
-    "accuracy": 0.58
+    "accuracy": 0.58,
+    "balanced_accuracy": 0.57,
+    "sensitivity": 0.50,
+    "specificity": 0.64,
+    "roc_auc": 0.61
   },
   "history": []
 }
 ```
+
+The binary path always writes the full suite above, which is what the "Things To Watch Out" section
+below tells you to track — accuracy alone is not enough on imbalanced clinical data.
 
 ## Example Plots
 
@@ -243,7 +256,7 @@ flowchart TB
 ## Things To Watch Out
 
 - Patient leakage: `subject_id` must be the real participant ID, not a drawing ID, crop folder, or filename stem unless that stem truly identifies the person.
-- Hemato layout: the loader uses the top folder under the dataset root as `subject_id` and stores the final-crop parent folder as `drawing_session`. Check the generated manifest if your local layout differs.
+- Moura layout: the `hemato` loader uses the top folder under the dataset root as `subject_id` and stores the final-crop parent folder as `drawing_session`. Check the generated manifest if your local layout differs.
 - DINO input size: pass `--image-size 518` with `vit_small_patch14_dinov2` unless the code is updated to configure timm for another size.
 - Split balance: subject splits are label-stratified in the main CLI, ensuring robust and balanced patient counts across train, validation, and test sets.
 - Small validation sets: a single missed subject can swing metrics sharply. Prefer reporting confidence intervals or cross-validation for paper-facing claims.

@@ -2,9 +2,9 @@
 
 Hemato is IRB-restricted clinical data and is NOT shipped with this release. It
 is available on request from NIATS-UFU (see docs/DATA.md). This builder turns
-the dataset's on-disk output into a unified manifest.
+the dataset's on-disk output into a unified manifest and supports two layouts.
 
-Preferred layout — flat session structure (no central parquet):
+Cropper layout — flat session structure under output/ (no central parquet):
     <data_root>/hemato/output/<session_dir>/5_final/*_centered.png
 
 where each <session_dir> matches one of:
@@ -12,12 +12,18 @@ where each <session_dir> matches one of:
     V<n>_PARKINSON_DADOS_DESENHOS_<N>      → parkinson
     V<n>_CONTROLE_RAW_DATA_drawings_<N>    → healthy
 
-Legacy layout (output/ with central parquet, kept as fallback):
-    <data_root>/hemato/output/all_metadata.parquet
+    subject_id is the V<n> prefix of the session folder name; drawing type is
+    inferred from the filename: *_spi_* → spiral, *_sen_* → wave. A central
+    output/all_metadata.parquet, when present, is used in place of the flat scan.
 
-Subject ID + class label parsing:
-    subject_id is the V<n> prefix of the session folder name.
-    drawing type is inferred from the filename: *_spi_* → spiral, *_sen_* → wave.
+Release layout — the de-identified moura-neto-2023-2025 image tree:
+    <data_root>/hemato/V<n>/{spiral,wave}/V<n>_<PARKINSON|CONTROL>_<SPIRAL|WAVE>_<drawing>_<sheet>.png
+
+    subject_id comes from the V<n> folder, drawing type from the subfolder, and
+    class label from the filename token.
+
+build_hemato_manifest picks the layout by what is present on disk (see its
+docstring), so the same code reads either the cropper output or the release.
 """
 
 import hashlib
@@ -32,6 +38,11 @@ from .unified import MANIFEST_COLUMNS, make_image_id
 # V<n>_<DATASET_TAG>_<...>
 _LEAF_RE = re.compile(r"^(V\d+)_(PARKINSON|CONTROLE)_", re.IGNORECASE)
 _ROW_TYPE_TO_DRAWING = {"spi": "spiral", "sen": "wave"}
+
+# Release image-tree filename: V<n>_<PARKINSON|CONTROL>_<SPIRAL|WAVE>_<drawing>_<sheet>.png.
+# Captures <drawing> (position on the sheet); <sheet> is matched but unused.
+_RELEASE_FILE_RE = re.compile(r"^(V\d+)_(PARKINSON|CONTROL)_[A-Z]+_(\d+)_\d+\.png$", re.IGNORECASE)
+_RELEASE_LABEL = {"PARKINSON": "parkinson", "CONTROL": "healthy"}
 
 
 def _parse_leaf(leaf: str) -> tuple[str, str, str]:
@@ -172,14 +183,49 @@ def _scan_output_legacy(parquet_path: Path, data_root: Path) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=MANIFEST_COLUMNS)
 
 
+def _scan_release_imagetree(hemato_root: Path) -> pd.DataFrame:
+    """Build the manifest from the de-identified release image tree.
+
+    Layout: <hemato_root>/V<n>/{spiral,wave}/V<n>_<PARKINSON|CONTROL>_<SPIRAL|WAVE>_<drawing>_<sheet>.png.
+    session_id is V<n>_<drawing>, so it groups by position on the sheet rather than
+    by acquisition; reported metrics are subject-level, so nothing published depends
+    on it. The release is already de-duplicated, so there is no session-fingerprint
+    dedup here (unlike the cropper flat scan).
+    """
+    rows: list[dict] = []
+    for drawing_type in ("spiral", "wave"):
+        for image_path in sorted(hemato_root.glob(f"V*/{drawing_type}/*.png")):
+            m = _RELEASE_FILE_RE.match(image_path.name)
+            if m is None:
+                raise ValueError(f"Hemato image name did not match expected pattern: {image_path.name!r}")
+            v_prefix, label_tag, drawing = m.group(1).upper(), m.group(2).upper(), m.group(3)
+            # image_id keys on the data-root-relative path so it survives the tree
+            # being moved or symlinked; file_path keeps the resolved absolute path.
+            manifest_rel = (Path("hemato") / image_path.relative_to(hemato_root)).as_posix()
+            rows.append({
+                "image_id": make_image_id("hemato", manifest_rel),
+                "dataset": "hemato",
+                "subject_id": f"hemato:{v_prefix}",
+                "drawing_type": drawing_type,
+                "class_label": _RELEASE_LABEL[label_tag],
+                "published_split": None,
+                "cv_fold": pd.NA,
+                "session_id": f"{v_prefix}_{drawing}",
+                "file_path": str(image_path.resolve()),
+                "source_notes": "moura-neto-2023-2025 cleaned release",
+            })
+    return pd.DataFrame(rows, columns=MANIFEST_COLUMNS)
+
+
 def build_hemato_manifest(data_root: Path) -> pd.DataFrame:
     """Build the Hemato portion of the unified manifest.
 
-    Priority order:
-    1. output/ without all_metadata.parquet → flat session scan (preferred).
+    Priority order (first match wins, so the cropper output takes precedence):
+    1. output/ without all_metadata.parquet → flat session scan (cropper output).
     2. output/ with all_metadata.parquet    → legacy parquet scan.
     3. output_v2/                           → flat session scan (old symlink name).
-    4. Neither present                      → empty DataFrame.
+    4. V<n>/{spiral,wave}/*.png             → release image-tree scan.
+    5. None present                         → empty DataFrame.
     """
     data_root = Path(data_root)
 
@@ -194,5 +240,10 @@ def build_hemato_manifest(data_root: Path) -> pd.DataFrame:
     v2_root = data_root / "hemato" / "output_v2"
     if v2_root.is_dir():
         return _scan_flat_output(v2_root, "output_v2")
+
+    # De-identified release image tree (no output/ dir, no central parquet).
+    hemato_root = data_root / "hemato"
+    if hemato_root.is_dir() and (any(hemato_root.glob("V*/spiral/*.png")) or any(hemato_root.glob("V*/wave/*.png"))):
+        return _scan_release_imagetree(hemato_root)
 
     return pd.DataFrame([], columns=MANIFEST_COLUMNS)

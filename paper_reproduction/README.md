@@ -9,7 +9,12 @@ pipelines across three datasets in a full train × test factorial:
 
 - **Pipelines:** DINOv2 frozen linear probe (the proposed method), Huang VGG19,
   Dogan triple-CNN + NCA + SVM, Folador HOG + SVM.
-- **Datasets:** Kaggle (public), Folador (public), Hemato (NIATS-UFU clinical, on request).
+- **Datasets:** Zham (public), Folador (public), Moura (NIATS-UFU clinical, on request).
+
+> **Dataset names.** The paper calls the three datasets *Zham*, *Folador* and *Moura*; the code keys
+> them `kaggle`, `folador` and `hemato`. The keys are frozen — they are hashed into `cell_id`, into
+> every `image_id` and `subject_id`, and into the released artifact names — so they appear verbatim in
+> every command, path and result file below. Read `hemato` as **Moura** throughout.
 - **Findings:** strong in-domain ceilings (**H1**) collapse off-diagonal — spiral
   classifiers **do not transfer across datasets** (**H2**) — while the frozen
   DINOv2 probe matches fine-tuned CNNs at a fraction of the hyperparameter and
@@ -24,7 +29,7 @@ pipelines across three datasets in a full train × test factorial:
 - `scripts/` — Layer-1 regeneration and Layer-2 re-training entry points.
 - `notebooks/reproduce_experiments.ipynb` — the one notebook that runs everything,
   in the paper's naming.
-- `models/` — tooling to export and use the released DINOv2 + Hemato probe.
+- `models/` — tooling to export and use the released DINOv2 + Moura probe.
 - `requirements-lock.txt` — fully pinned transitive dependency lock for exact
   Python 3.13 reproduction environments.
 - `docs/` — [`REPRODUCE.md`](docs/REPRODUCE.md), [`DATA.md`](docs/DATA.md),
@@ -86,7 +91,7 @@ existing local predictions are skipped unless `--force` is passed.
 ## The released model
 
 One trained artifact accompanies the paper: a logistic **linear probe** on a
-**frozen, public DINOv2 ViT-B/14** backbone, fit on 100% of Hemato. The backbone is
+**frozen, public DINOv2 ViT-B/14** backbone, fit on 100% of Moura. The backbone is
 never shipped (downloaded from `torch.hub` at use time); only the ~KB sklearn probe
 is ours. See [`models/MODEL_CARD.md`](models/MODEL_CARD.md).
 
@@ -101,7 +106,7 @@ python models/predict.py --model-dir models/exported --images path/to/spirals/
 
 ## Data
 
-No images are distributed. Kaggle and Folador are public; Hemato is IRB-restricted
+No images are distributed. Zham and Folador are public; Moura is IRB-restricted
 and available on request from NIATS-UFU. See [`docs/DATA.md`](docs/DATA.md).
 
 ## Citation

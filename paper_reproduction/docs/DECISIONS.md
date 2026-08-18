@@ -72,8 +72,8 @@ _FNAME_RE = re.compile(r"^(V\d+)([PH])[EO]\d+\.(?:png|jpe?g)$", re.IGNORECASE)
 ```
 
 All images for the same person now share a subject ID (`kaggle:V01H`,
-`kaggle:V01P`). Deduplication yields the correct 28 subjects (14 healthy +
-14 parkinson) before folds are assigned.
+`kaggle:V01P`). Deduplication yields the correct 28 subjects (13 healthy +
+15 parkinson) before folds are assigned.
 
 ### Bug 2 — Image-row fold construction (splits.py)
 
@@ -90,7 +90,7 @@ splits = list(splitter.split(sub, y=y, groups=groups))
 ```
 
 `StratifiedGroupKFold` distributes *image rows* (not subjects) across folds
-while trying to keep groups intact. A Hemato subject with 50 session images
+while trying to keep groups intact. A Moura subject with 50 session images
 counted 50× in the split objective; a Kaggle subject with a single image
 counted 1×. Subjects with many images anchored individual folds, crowding out
 smaller ones and producing unbalanced subject counts per fold. The class
@@ -117,9 +117,9 @@ Each subject contributes exactly one vote to fold assignment regardless of how
 many images they have. The 5-fold split is guaranteed class-stratified at the
 subject level, consistent with the subject-level evaluation protocol.
 
-### Bug 3 — Hemato duplicate images (hemato.py)
+### Bug 3 — Moura duplicate images (hemato.py)
 
-**Root cause.** The Hemato metadata parquet (`all_metadata.parquet`) was built
+**Root cause.** The Moura metadata parquet (`all_metadata.parquet`) was built
 from session data collected under two naming conventions (V5 and V17 folders).
 Twenty images appeared in entries for both naming schemes. The manifest builder
 attempted to resolve each row's path but did not check whether the resolved
@@ -152,6 +152,13 @@ The manifest now has 8,158 rows, each backed by a file that exists. The 20
 removed rows were split evenly across subjects, so no individual subject's fold
 membership changed, but their absence corrects training-set composition in the
 affected folds.
+
+> **Counts above are as of the crop in hand when this fix landed.** They record what
+> the fix did, not the size of any later dataset. Successive Moura crops and the
+> `moura-neto-2023-2025` release layout each produce different totals, and
+> `session_id` does not even mean the same thing across layouts. Fingerprint your own
+> copy with `scripts/paper.py dataset-fingerprint` rather than comparing against these
+> numbers — see [`DATA.md`](DATA.md).
 
 ## Experiment Semantics
 

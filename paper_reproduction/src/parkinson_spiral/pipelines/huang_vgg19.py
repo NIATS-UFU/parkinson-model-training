@@ -23,21 +23,32 @@ GRAD_MAX_NORM = 1.0  # numerical safeguard for end-to-end VGG19 fine-tuning
 
 
 def _uses_mixed_precision(device: str) -> bool:
-    # CUDA has loss scaling below. MPS does not, so full precision avoids
+    # CUDA has loss scaling below. MPS/CPU do not, so full precision avoids
     # underflowing the small gradients produced by end-to-end fine-tuning.
     return device == "cuda"
 
 
-def _validate_gradient_norm_value(norm: float, *, recover_nonfinite: bool, epoch: int) -> None:
-    if not math.isfinite(norm):
-        if recover_nonfinite:
-            return
-        raise FloatingPointError(f"Huang VGG19 produced non-finite gradients in epoch {epoch + 1}")
-    if norm == 0.0:
-        raise RuntimeError(f"Huang VGG19 produced zero gradients in epoch {epoch + 1}; training would collapse")
+def _classify_gradient(norm: float, *, has_loss_scaler: bool, epoch: int) -> str:
+    """Decide what a batch's clipped gradient norm means for the optimizer step.
+
+    - "usable": finite and > 0 -> apply the update.
+    - "skip":   a zero norm -> a benign no-op. Near convergence a perfectly-fit
+                batch has a genuinely ~0 cross-entropy gradient, and under fp16 a
+                small-but-real gradient can round to exactly 0; neither is a
+                failure. Also non-finite *when a loss scaler is present*, which
+                will back the scale off and retry that batch.
+
+    Only a non-finite gradient with no loss scaler to recover it (the
+    full-precision path) is fatal -- there is no way to salvage that step.
+    """
+    if math.isfinite(norm):
+        return "usable" if norm > 0.0 else "skip"
+    if has_loss_scaler:
+        return "skip"
+    raise FloatingPointError(f"Huang VGG19 produced non-finite gradients in epoch {epoch + 1}")
 
 
-def _clip_gradients(parameters, *, recover_nonfinite: bool, epoch: int) -> None:
+def _clip_gradients(parameters) -> float:
     import torch
 
     trainable = [parameter for parameter in parameters if parameter.requires_grad]
@@ -46,7 +57,18 @@ def _clip_gradients(parameters, *, recover_nonfinite: bool, epoch: int) -> None:
         max_norm=GRAD_MAX_NORM,
         error_if_nonfinite=False,
     )
-    _validate_gradient_norm_value(float(norm), recover_nonfinite=recover_nonfinite, epoch=epoch)
+    return float(norm)
+
+
+def _is_single_class_collapse(train_predictions: np.ndarray, n_training_classes: int) -> bool:
+    """A trained binary classifier must discriminate on its own training data.
+
+    Predicting a single class while the training set held two is a genuine
+    collapse (a dead model), as opposed to the benign per-batch underflow that
+    `_classify_gradient` skips. If the training labels were themselves one class,
+    a single-class prediction is correct, not a collapse.
+    """
+    return n_training_classes >= 2 and np.unique(train_predictions).size < 2
 
 
 class HuangVGG19(Pipeline):
@@ -77,7 +99,10 @@ class HuangVGG19(Pipeline):
         "eta_min=1e-6) and document. Normalization uses Huang's published mean=0.5/std=0.5 "
         "per channel (non-standard for ImageNet-pretrained VGG19, but kept faithful for "
         "the reproduction). Gradients are clipped to a maximum norm of 1.0 after AMP "
-        "unscaling to prevent unstable end-to-end updates."
+        "unscaling to prevent unstable end-to-end updates. A batch whose gradient "
+        "underflows to zero near convergence is skipped as a no-op rather than treated "
+        "as a failure; genuine non-convergence is detected once, after training, by "
+        "verifying the model still discriminates on its own training data."
     )
     _LAST_FIT_KEY: ClassVar[tuple | None] = None
     _LAST_MODEL: ClassVar[object | None] = None
@@ -160,11 +185,13 @@ class HuangVGG19(Pipeline):
         )
 
         self._model.train()
+        usable_updates = 0
+        training_labels: set[int] = set()
         for epoch in tqdm(range(self.epochs), desc="huang-epoch", leave=False):
-            epoch_had_update = False
             for tensors, labels, _ in loader:
                 tensors = tensors.to(self._device, non_blocking=True)
                 labels = labels.to(self._device, non_blocking=True).long()
+                training_labels.update(int(label) for label in labels.unique().tolist())
                 optim.zero_grad(set_to_none=True)
                 with torch.amp.autocast(self._device, enabled=use_amp):
                     logits = self._model(tensors)
@@ -172,22 +199,38 @@ class HuangVGG19(Pipeline):
                 if use_scaler:
                     scaler.scale(loss).backward()
                     scaler.unscale_(optim)
-                    _clip_gradients(self._model.parameters(), recover_nonfinite=True, epoch=epoch)
-                    scale_before_step = scaler.get_scale()
+                    norm = _clip_gradients(self._model.parameters())
+                    if _classify_gradient(norm, has_loss_scaler=True, epoch=epoch) == "usable":
+                        usable_updates += 1
+                    # A zero-gradient step is a no-op and the scaler skips a
+                    # non-finite one internally; both are safe to hand to step().
                     scaler.step(optim)
                     scaler.update()
-                    epoch_had_update |= scaler.get_scale() >= scale_before_step
                 else:
                     loss.backward()
-                    _clip_gradients(self._model.parameters(), recover_nonfinite=False, epoch=epoch)
-                    optim.step()
-                    epoch_had_update = True
-            if not epoch_had_update:
-                raise FloatingPointError(f"Huang VGG19 produced no valid optimizer updates in epoch {epoch + 1}")
+                    norm = _clip_gradients(self._model.parameters())
+                    if _classify_gradient(norm, has_loss_scaler=False, epoch=epoch) == "usable":
+                        optim.step()
+                        usable_updates += 1
             sched.step()
+        self._assert_model_trained(dataset, usable_updates, training_labels)
         self.__class__._LAST_FIT_KEY = fit_key
         self.__class__._LAST_MODEL = self._model
         self.__class__._LAST_DEVICE = self._device
+
+    def _assert_model_trained(self, dataset, usable_updates: int, training_labels: set[int]) -> None:
+        """Fail loudly on a genuinely collapsed run, but only after training.
+
+        A single underflowed batch is benign (see `_classify_gradient`), so the
+        real check is at the model level: at least one usable update must have
+        happened, and the trained model must still tell its own training classes
+        apart. This never fires on the expected near-convergence underflow.
+        """
+        if usable_updates == 0:
+            raise RuntimeError("Huang VGG19 produced no usable gradient in any batch; the model never trained")
+        train_predictions = self.predict_proba(dataset).argmax(axis=1)
+        if _is_single_class_collapse(train_predictions, len(training_labels)):
+            raise RuntimeError("Huang VGG19 collapsed to a single-class predictor on its own training data")
 
     def predict_proba(self, dataset) -> np.ndarray:
         import torch
