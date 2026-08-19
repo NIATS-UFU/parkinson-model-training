@@ -968,6 +968,27 @@ EMBEDDING_METADATA_COLUMNS = (
 )
 
 
+def class_label_to_int() -> dict[str, int]:
+    """The canonical class-label mapping, obtained without requiring torch.
+
+    `CLASS_LABEL_TO_INT` is defined in `parkinson_spiral.data.dataset`, which
+    imports torch at module level because it defines a `torch.utils.data.Dataset`.
+    torch lives in the `[train]` extra, so a Layer-1 install cannot import that
+    module at all, and `build_embedding_frame` is on the Layer-1 path.
+
+    The literal is duplicated here rather than moved to a torch-free module
+    because moving it would edit `src/parkinson_spiral/`, which changes
+    `_source_sha256()` and invalidates every cached cell. The duplication is
+    held in check by a test that forces this fallback and asserts it still
+    equals the canonical mapping.
+    """
+    try:
+        from parkinson_spiral.data.dataset import CLASS_LABEL_TO_INT
+    except ImportError:
+        return {"healthy": 0, "parkinson": 1}
+    return dict(CLASS_LABEL_TO_INT)
+
+
 def build_embedding_frame(
     manifest: pd.DataFrame,
     features: np.ndarray,
@@ -980,7 +1001,7 @@ def build_embedding_frame(
     must be manifest row i; comparing the labels it emitted against the manifest's
     own is what checks that the correspondence actually held.
     """
-    from parkinson_spiral.data.dataset import CLASS_LABEL_TO_INT
+    CLASS_LABEL_TO_INT = class_label_to_int()
 
     if len(features) != len(manifest):
         raise ValueError(f"extractor returned {len(features)} vectors for {len(manifest)} images")

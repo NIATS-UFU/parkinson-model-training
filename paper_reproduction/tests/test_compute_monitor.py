@@ -2,7 +2,22 @@
 
 import time
 
+import pytest
 from parkinson_spiral.compute import ComputeMonitor, host_rss_peak_mb
+
+
+def _cuda_available() -> bool:
+    """Whether CUDA is usable here, tolerating torch being absent entirely.
+
+    torch lives in the `[train]` extra, so the Layer-1 install these tests run
+    under does not have it. `ComputeMonitor` handles that by catching
+    ImportError, and so must anything asserting on its behaviour.
+    """
+    try:
+        import torch
+    except ImportError:
+        return False
+    return torch.cuda.is_available()
 
 
 def test_wall_clock_is_measured() -> None:
@@ -30,11 +45,13 @@ def test_gpu_fields_are_none_without_cuda() -> None:
 
     Zero would claim a measurement of no memory used; None says no measurement
     was possible. A cost table must be able to tell those apart.
-    """
-    import torch
 
-    if torch.cuda.is_available():
-        return
+    This covers both ways CUDA can be unavailable: no GPU on the host, and no
+    torch installed at all. The second is the ordinary case for a Layer-1
+    install, so it is the one that must not raise.
+    """
+    if _cuda_available():
+        pytest.skip("CUDA is present; this asserts the no-measurement branch")
     with ComputeMonitor() as monitor:
         pass
     assert monitor.gpu_peak_mb is None

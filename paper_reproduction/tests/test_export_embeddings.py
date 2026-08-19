@@ -57,3 +57,26 @@ def test_reordered_labels_are_rejected(paper) -> None:
 
     with pytest.raises(ValueError, match="do not follow the manifest order"):
         paper.build_embedding_frame(manifest, features, np.array([1, 0]))
+
+
+def test_fallback_label_map_matches_the_canonical_one(paper, monkeypatch) -> None:
+    """The duplicated literal must never drift from the mapping it stands in for.
+
+    `class_label_to_int` keeps a copy of `CLASS_LABEL_TO_INT` so the Layer-1 path
+    works without torch. A copy that silently disagreed with the canonical mapping
+    would mislabel every exported embedding while looking perfectly healthy, so
+    this forces the fallback branch and compares it against the real thing.
+
+    Skipped where torch is absent: there is no canonical mapping to compare to.
+    """
+    import sys
+
+    canonical = pytest.importorskip(
+        "parkinson_spiral.data.dataset",
+        reason="torch is in the [train] extra; nothing to compare the fallback against",
+    ).CLASS_LABEL_TO_INT
+
+    # A None entry in sys.modules makes `import` raise ImportError, which is the
+    # branch a torch-free install takes.
+    monkeypatch.setitem(sys.modules, "parkinson_spiral.data.dataset", None)
+    assert paper.class_label_to_int() == canonical
