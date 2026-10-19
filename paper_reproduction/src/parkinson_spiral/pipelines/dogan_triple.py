@@ -18,6 +18,7 @@ from typing import ClassVar
 import numpy as np
 from sklearn.neighbors import NeighborhoodComponentsAnalysis
 from sklearn.svm import SVC
+from threadpoolctl import threadpool_limits
 
 from ..protocol import Pipeline
 from .folador_hog import _stable_sigmoid
@@ -27,6 +28,11 @@ FINE_TUNE_LR = 1e-3  # Dogan didn't state - Adam default
 FINE_TUNE_BATCH = 32
 NCA_RETENTION = 0.17  # Dogan section 5
 INPUT_SIZE = 224  # Dogan's spec; both DenseNet/Xception are ImageNet-default 224x224
+# NCA's optimiser stops at a different iteration when its BLAS products are split across a
+# different number of threads, which moves the fitted projection and every downstream
+# probability. Fixing the count makes a result independent of how many cores the machine has;
+# it does not make it independent of the CPU model or BLAS build.
+NCA_THREADS = 8
 
 
 class DoganTriple(Pipeline):
@@ -268,6 +274,12 @@ class DoganTriple(Pipeline):
     def fit(self, dataset, *, seed: int) -> None:
         self._seed = seed
         self._build_backbones()
+        import torch
+
+        # A first build draws from torch's generator while constructing the layers; a cached
+        # build draws nothing. Reseeding here gives the training augmentations the same random
+        # stream either way, so a fit no longer depends on whether it ran first in the process.
+        torch.manual_seed(seed)
         if self._keras_nasnet is not None:
             import tensorflow as tf
 
@@ -289,7 +301,8 @@ class DoganTriple(Pipeline):
         X, y = self._extract(dataset)
         n_components = max(1, int(round(self.ncomponents_pct * X.shape[1])))
         self._nca = NeighborhoodComponentsAnalysis(n_components=n_components, random_state=seed)
-        X_nca = self._nca.fit_transform(X, y)
+        with threadpool_limits(limits=NCA_THREADS):
+            X_nca = self._nca.fit_transform(X, y)
         self._svm = SVC(kernel=self.svm_kernel, C=self.svm_C, random_state=seed)
         self._svm.fit(X_nca, y)
         if not self.fine_tune:
@@ -299,6 +312,8 @@ class DoganTriple(Pipeline):
         if self._svm is None or self._nca is None:
             raise RuntimeError("predict_proba called before fit")
         X, _ = self._extract(dataset)
-        margin = self._svm.decision_function(self._nca.transform(X))
+        with threadpool_limits(limits=NCA_THREADS):
+            X_nca = self._nca.transform(X)
+        margin = self._svm.decision_function(X_nca)
         p = _stable_sigmoid(margin)
         return np.stack([1 - p, p], axis=1)

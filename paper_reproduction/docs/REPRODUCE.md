@@ -182,3 +182,10 @@ logical result (e.g. the 5 CV folds of a diagonal), with a percentile bootstrap
 predictions is deterministic and exact once those predictions exist locally. One
 small caveat about two GPU-trained cross-dataset AUCs is documented in
 [`PROVENANCE.md`](PROVENANCE.md).
+
+`dogan_triple` is sensitive to the machine in one place. Its NCA step stops at a
+different iteration when its matrix products are split across a different number of
+threads, which moves every downstream probability. The pipeline therefore runs NCA on a
+fixed 8 threads (`NCA_THREADS`), so a result does not depend on how many cores the
+machine has. It can still change with the CPU model or the BLAS build, so reproducing a
+published Dogan cell exactly needs the same CPU model the run recorded.
