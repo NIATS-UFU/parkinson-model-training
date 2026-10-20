@@ -3,6 +3,8 @@
 Usage:
     python scripts/paper.py build-manifest --data-root <path> --out results/manifest.parquet
     python scripts/paper.py reproduce --manifest results/manifest.parquet --out results
+    python scripts/paper.py reproduce --manifest results/manifest.parquet --out results --save-models models
+    python scripts/paper.py verify-models --models models --manifest results/manifest.parquet --results results
     python scripts/paper.py regenerate --results results --out paper_artifacts
     python scripts/paper.py verify-catalog --results results
     python scripts/paper.py export-embeddings --manifest results/manifest.parquet \
@@ -192,10 +194,11 @@ def reproduce_command(args: argparse.Namespace) -> int:
     if not cells:
         raise SystemExit("no selected cells can run with the datasets present in the manifest")
     _require_cuda(cells)
+    on_fitted, saved = _model_saver(cells, args.save_models)
 
     paths = RunPaths(manifest=args.manifest, outputs_dir=args.out)
     for i, spec in enumerate(cells, 1):
-        row = run_cell(spec, paths, force=args.force)
+        row = run_cell(spec, paths, force=args.force, on_fitted=on_fitted)
         acc = row.get("subject_accuracy")
         acc_s = f"{acc:.3f}" if isinstance(acc, (int, float)) else "n/a"
         print(
@@ -203,8 +206,48 @@ def reproduce_command(args: argparse.Namespace) -> int:
             f"{spec.train_source}->{spec.test_source} -> subj_acc={acc_s}"
         )
 
+    if args.save_models:
+        missing = sorted({released_model_name(cell) for cell in cells} - {None} - saved)
+        if missing:
+            raise SystemExit(
+                f"no model saved for {missing}: their cells were served from cache, so nothing was trained. "
+                "Re-run with --force or an empty --out."
+            )
+        print(f"saved {len(saved)} models -> {args.save_models}")
     print(f"done -> {args.out}")
     return 0
+
+
+def _model_saver(cells: list[CellSpec], models_dir: Path | None):
+    """Return (on_fitted callback or None, set of saved model names) for `reproduce --save-models`.
+
+    Everything that would make the save fail is checked here, before any training starts. A model
+    is saved from the first cell that trains it; the second off-diagonal cell from the same
+    training dataset reuses or refits the same model, and `verify-models` checks both.
+    """
+    saved: set[str] = set()
+    if models_dir is None:
+        return None, saved
+    names = {released_model_name(cell) for cell in cells} - {None}
+    if not names:
+        raise SystemExit("--save-models given, but no selected cell trains a released (off-diagonal) model")
+    for cell in cells:
+        if released_model_name(cell) is not None:
+            check_model_saveable(cell)
+    existing = sorted(name for name in names if (models_dir / name).exists())
+    if existing:
+        raise SystemExit(f"{models_dir} already holds {existing}; refusing to overwrite saved models")
+    importlib.import_module("skops.io")
+
+    def on_fitted(spec: CellSpec, pipeline) -> None:
+        name = released_model_name(spec)
+        if name is None or name in saved:
+            return
+        save_released_model(spec, pipeline, models_dir)
+        saved.add(name)
+        print(f"  saved model {name}")
+
+    return on_fitted, saved
 
 
 def _fmt_ci(res: dict, nd: int = 2) -> str:
@@ -1301,6 +1344,268 @@ def cost_profile_command(args: argparse.Namespace) -> int:
     return 0
 
 
+# ---- released models ----
+
+# The released models are the 12 fits on ALL of one dataset behind the off-diagonal cells: one per
+# pipeline and training dataset. Each pipeline's fitted state is the files below, keyed to the
+# attribute that holds it. Its frozen ImageNet or DINOv2 backbones are not saved: they are public,
+# and the pipeline downloads them itself.
+MODEL_ARTIFACTS = {
+    "dinov2_probe": {"probe.skops": "_probe"},
+    "folador_hog": {"classifier.skops": "_model"},
+    "dogan_triple": {"nca.skops": "_nca", "svm.skops": "_svm"},
+    "huang_vgg19": {"vgg19_state_dict.pt": "_model"},
+}
+MODEL_CARD = "model.json"
+
+
+def released_model_name(spec: CellSpec) -> str | None:
+    """Name of the model a cell trains on all of its training dataset, or None.
+
+    Only off-diagonal cells train on a whole dataset; fold and released-split cells hold data out,
+    so their models are not released.
+    """
+    if spec.split_source != "cross-dataset":
+        return None
+    return f"{spec.pipeline_name}-{spec.train_source}"
+
+
+def check_model_saveable(spec: CellSpec) -> None:
+    """Raise if a cell's fitted state is not fully captured by `MODEL_ARTIFACTS`."""
+    if spec.pipeline_name == "dogan_triple" and spec.pipeline_kwargs.get("fine_tune", False):
+        raise ValueError(
+            "saving dogan_triple with fine_tune=True is not supported: the fine-tuned backbones are not saved"
+        )
+    if spec.pipeline_name == "folador_hog" and spec.pipeline_kwargs.get("classifier") == "CNN1D":
+        raise ValueError("saving folador_hog with the CNN1D classifier is not supported")
+
+
+def _dump_artifact(fitted, path: Path) -> None:
+    if path.suffix == ".skops":
+        import skops.io as sio
+
+        sio.dump(fitted, path)
+        return
+    import torch
+
+    torch.save({key: value.detach().cpu() for key, value in fitted.state_dict().items()}, path)
+
+
+def _load_artifact(path: Path):
+    """Load a saved artifact without executing code from it.
+
+    skops refuses any type outside its trusted defaults, and `weights_only` restricts torch to
+    tensors, so a tampered file fails to load instead of running.
+    """
+    if path.suffix == ".skops":
+        import skops.io as sio
+
+        return sio.load(path)
+    import torch
+
+    return torch.load(path, map_location="cpu", weights_only=True)
+
+
+def _same_value(a, b) -> bool:
+    """Exact equality through the containers a fitted scikit-learn estimator holds."""
+    if isinstance(a, np.ndarray):
+        if not isinstance(b, np.ndarray) or a.dtype != b.dtype:
+            return False
+        return bool(np.array_equal(a, b, equal_nan=a.dtype.kind in "fc"))
+    if isinstance(a, np.random.RandomState):
+        return isinstance(b, np.random.RandomState) and _same_value(list(a.get_state()), list(b.get_state()))
+    if isinstance(a, dict):
+        return isinstance(b, dict) and a.keys() == b.keys() and all(_same_value(a[key], b[key]) for key in a)
+    if isinstance(a, (list, tuple)):
+        return type(a) is type(b) and len(a) == len(b) and all(map(_same_value, a, b))
+    return type(a) is type(b) and a == b
+
+
+def same_fitted_state(fitted, reloaded) -> bool:
+    """Whether a reloaded artifact holds exactly the fitted state that was saved."""
+    if isinstance(reloaded, dict):
+        import torch
+
+        state = fitted.state_dict()
+        return state.keys() == reloaded.keys() and all(
+            torch.equal(state[key].detach().cpu(), reloaded[key]) for key in state
+        )
+    return type(fitted) is type(reloaded) and _same_value(vars(fitted), vars(reloaded))
+
+
+def save_released_model(spec: CellSpec, pipeline, models_dir: Path) -> Path:
+    """Save the fitted pipeline of an off-diagonal cell to `models_dir/<name>/`.
+
+    Every file is reloaded and compared with the in-memory model before the card is written, so
+    a directory with a card holds a model that reloads exactly. The card lists the cells the
+    model serves and the code that trained it.
+    """
+    from parkinson_spiral.runner import _package_versions, _source_sha256
+
+    name = released_model_name(spec)
+    if name is None:
+        raise ValueError(f"cell {spec.cell_id} is not an off-diagonal cell; its model is not released")
+    check_model_saveable(spec)
+    directory = models_dir / name
+    if directory.exists():
+        raise FileExistsError(f"{directory} already exists; refusing to overwrite a saved model")
+    directory.mkdir(parents=True)
+
+    files = {}
+    for filename, attribute in MODEL_ARTIFACTS[spec.pipeline_name].items():
+        fitted = getattr(pipeline, attribute)
+        path = directory / filename
+        _dump_artifact(fitted, path)
+        if not same_fitted_state(fitted, _load_artifact(path)):
+            raise RuntimeError(f"{path} does not reload to the fitted state that was saved")
+        files[filename] = _sha256(path)
+
+    served = [cell for cell in all_cells() if released_model_name(cell) == name]
+    repo = Path(__file__).resolve().parents[1]
+    card = {
+        "schema": 1,
+        "name": name,
+        "pipeline_name": spec.pipeline_name,
+        "recipe_name": spec.recipe_name,
+        "pipeline_kwargs": spec.pipeline_kwargs,
+        "train_source": spec.train_source,
+        "task_filter": spec.task_filter,
+        "seed": spec.seed,
+        "cells": {cell.cell_id: cell.test_source for cell in served},
+        "files": files,
+        "public_backbones": get_pipeline_class(spec.pipeline_name).MODEL_WEIGHT_IDENTIFIERS,
+        "public_backbone_checksums": getattr(pipeline, "_model_weight_checksums", {}),
+        "git_commit": _git_value(repo.parent, "rev-parse", "HEAD"),
+        "source_sha256": _source_sha256(),
+        "packages": {**_package_versions(), "skops": importlib.metadata.version("skops")},
+    }
+    (directory / MODEL_CARD).write_text(json.dumps(card, indent=2, sort_keys=True), encoding="utf-8")
+    return directory
+
+
+def load_released_model(directory: Path):
+    """Rebuild a saved model as a pipeline ready for `predict_proba`. Returns (pipeline, card).
+
+    File checksums are checked against the card first. The public backbones are downloaded on
+    first use, as in training.
+    """
+    from parkinson_spiral.pipelines import accelerator_device, get_pipeline
+
+    card = json.loads((directory / MODEL_CARD).read_text(encoding="utf-8"))
+    for filename, expected in card["files"].items():
+        if _sha256(directory / filename) != expected:
+            raise ValueError(f"{directory / filename} does not match the checksum in its {MODEL_CARD}")
+
+    name = card["pipeline_name"]
+    pipeline = get_pipeline(name, **card["pipeline_kwargs"])
+    if name == "huang_vgg19":
+        # Rebuild the architecture, then replace every weight with the saved ones.
+        model = pipeline._build()
+        model.load_state_dict(_load_artifact(directory / "vgg19_state_dict.pt"))
+        pipeline._device = accelerator_device()
+        pipeline._model = model.to(pipeline._device)
+        return pipeline, card
+    for filename, attribute in MODEL_ARTIFACTS[name].items():
+        setattr(pipeline, attribute, _load_artifact(directory / filename))
+    if name == "dogan_triple":
+        pipeline._build_backbones()
+    return pipeline, card
+
+
+def _same_metrics(a: dict | None, b: dict | None) -> bool:
+    if a is None or b is None:
+        return a is b
+    return a.keys() == b.keys() and all(a[key] == b[key] or (np.isnan(a[key]) and np.isnan(b[key])) for key in a)
+
+
+def compare_cell_predictions(reference: pd.DataFrame, new: pd.DataFrame) -> dict:
+    """Compare one cell's predictions from a saved model with the same cell in a completed run.
+
+    Participant-level metrics are the criterion, since the paper reports at that level. The largest
+    per-image probability difference is reported alongside: a frozen backbone run on a GPU in a
+    different batch composition can move image probabilities slightly without changing a decision.
+    """
+    from parkinson_spiral.metrics import metrics_at_all_levels
+
+    ref = reference.set_index("image_id").sort_index()
+    out = new.set_index("image_id").sort_index()
+    if not ref.index.equals(out.index):
+        return {"same_test_images": False, "max_abs_proba_delta": None, "same_subject_metrics": False}
+    reference_subject = metrics_at_all_levels(reference)["subject"]
+    new_subject = metrics_at_all_levels(new)["subject"]
+    return {
+        "same_test_images": True,
+        "max_abs_proba_delta": float((out["y_proba_pos"] - ref["y_proba_pos"]).abs().max()),
+        "same_subject_metrics": _same_metrics(reference_subject, new_subject),
+        "subject_metrics": new_subject,
+    }
+
+
+def verify_models_command(args: argparse.Namespace) -> int:
+    """Reload every saved model, re-predict the cells it serves, and compare with a completed run."""
+    from parkinson_spiral.data.dataset import PreprocessedSpiralDataset
+    from parkinson_spiral.recipes import get_recipe
+    from parkinson_spiral.runner import _configure_reproducibility, _recipe_kwargs_for_spec, resolve_split
+
+    directories = sorted(card.parent for card in args.models.glob(f"*/{MODEL_CARD}"))
+    if not directories:
+        raise SystemExit(f"no saved models (*/{MODEL_CARD}) under {args.models}")
+    if not args.manifest.is_file():
+        raise SystemExit(f"manifest not found: {args.manifest}")
+    manifest = pd.read_parquet(args.manifest)
+    available = set(manifest["dataset"].dropna().astype(str).unique())
+    catalog = {cell.cell_id: cell for cell in all_cells()}
+
+    records = []
+    for directory in directories:
+        pipeline, card = load_released_model(directory)
+        for cell_id in card["cells"]:
+            spec = catalog[cell_id]
+            if spec.test_source not in available:
+                print(f"  {card['name']:22s} -> {spec.test_source:8s} skipped: dataset absent from the manifest")
+                continue
+            reference_path = args.results / "predictions" / f"{cell_id}.parquet"
+            if not reference_path.is_file():
+                raise SystemExit(f"{reference_path} not found; --results must hold the run that trained these models")
+            _configure_reproducibility(spec.seed)
+            _, test_idx = resolve_split(manifest, spec)
+            test_manifest = manifest.loc[test_idx].reset_index(drop=True)
+            recipe = get_recipe(spec.recipe_name, **_recipe_kwargs_for_spec(spec))
+            test_ds = PreprocessedSpiralDataset(test_manifest, recipe, is_train=False, target_column=spec.target_column)
+            proba = pipeline.predict_proba(test_ds)
+            new = pd.DataFrame({
+                "image_id": test_manifest["image_id"].astype(str).to_numpy(),
+                "subject_id": test_manifest["subject_id"].astype(str).to_numpy(),
+                "session_id": test_manifest["session_id"].astype("string").to_numpy(),
+                "y_true": (test_manifest["class_label"] == "parkinson").astype(int).to_numpy(),
+                "y_proba_pos": proba[:, 1],
+            })
+            record = {"model": card["name"], "cell_id": cell_id, "test_source": spec.test_source}
+            record.update(compare_cell_predictions(pd.read_parquet(reference_path), new))
+            records.append(record)
+            verdict = "same" if record["same_subject_metrics"] else "DIFFERENT"
+            delta = record["max_abs_proba_delta"]
+            delta_s = "n/a" if delta is None else f"{delta:.3e}"
+            print(
+                f"  {card['name']:22s} -> {spec.test_source:8s} participant metrics {verdict}; max |proba delta| {delta_s}"
+            )
+
+    if not records:
+        raise SystemExit("no served cell has its test dataset in the manifest; nothing was verified")
+    report = {
+        "schema": 1,
+        "models_dir": str(args.models),
+        "results_dir": str(args.results),
+        "manifest_sha256": _sha256(args.manifest),
+        "cells": records,
+        "all_same_subject_metrics": all(record["same_subject_metrics"] for record in records),
+    }
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    args.out.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+    print(f"\n{sum(r['same_subject_metrics'] for r in records)}/{len(records)} cells reproduce; wrote {args.out}")
+    return 0 if report["all_same_subject_metrics"] else 1
+
+
 def _build_parser() -> argparse.ArgumentParser:
     repo = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
@@ -1320,7 +1625,23 @@ def _build_parser() -> argparse.ArgumentParser:
     reproduce.add_argument("--shard-index", type=int, default=0, help="zero-based shard to run")
     reproduce.add_argument("--dry-run", action="store_true", help="list cells and exit without training")
     reproduce.add_argument("--force", action="store_true", help="recompute even if cached")
+    reproduce.add_argument(
+        "--save-models",
+        type=Path,
+        default=None,
+        help="save each model trained on all of a dataset (off-diagonal cells) here; needs the hf extra",
+    )
     reproduce.set_defaults(func=reproduce_command)
+
+    verify_models = sub.add_parser(
+        "verify-models",
+        help="reload saved models, re-predict their cells, and compare with the run that trained them",
+    )
+    verify_models.add_argument("--models", type=Path, required=True, help="directory written by --save-models")
+    verify_models.add_argument("--manifest", type=Path, default=repo / "results" / "manifest.parquet")
+    verify_models.add_argument("--results", type=Path, default=repo / "results", help="results of that run")
+    verify_models.add_argument("--out", type=Path, default=repo / "results" / "verify_models.json")
+    verify_models.set_defaults(func=verify_models_command)
 
     regenerate = sub.add_parser("regenerate", help="regenerate paper tables and figures from local results")
     regenerate.add_argument("--results", type=Path, default=repo / "results")

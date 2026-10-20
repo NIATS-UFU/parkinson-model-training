@@ -13,6 +13,7 @@ import os
 import platform
 import random
 import subprocess
+from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from functools import lru_cache
@@ -303,8 +304,19 @@ def _append_cell_row(paths: RunPaths, row: dict[str, Any]) -> None:
             temporary.unlink(missing_ok=True)
 
 
-def run_cell(spec: CellSpec, paths: RunPaths, *, force: bool = False) -> dict[str, Any]:
-    """Train pipeline, predict, persist predictions parquet + cells.parquet row."""
+def run_cell(
+    spec: CellSpec,
+    paths: RunPaths,
+    *,
+    force: bool = False,
+    on_fitted: Callable[[CellSpec, Pipeline], None] | None = None,
+) -> dict[str, Any]:
+    """Train pipeline, predict, persist predictions parquet + cells.parquet row.
+
+    `on_fitted`, if given, receives the spec and the fitted pipeline once its predictions exist,
+    so a caller can save the exact model behind them. A cell served from cache trains nothing
+    and does not call it.
+    """
     spec.validate()
     cell_id = spec.cell_id
     _configure_reproducibility(spec.seed)
@@ -355,6 +367,10 @@ def run_cell(spec: CellSpec, paths: RunPaths, *, force: bool = False) -> dict[st
 
     with ComputeMonitor() as pred_mon:
         proba = pipeline.predict_proba(test_ds)
+
+    # Before anything is written, so a failed save leaves the cell uncached and a re-run refits it.
+    if on_fitted is not None:
+        on_fitted(spec, pipeline)
 
     provenance["model_weight_checksums"] = getattr(pipeline, "_model_weight_checksums", {})
     run_signature = _reproducibility_signature(provenance)
