@@ -127,9 +127,10 @@ python scripts/paper.py reproduce --manifest results/manifest.parquet --out resu
 python scripts/paper.py verify-models --models models --manifest results/manifest.parquet --results results
 ```
 
-Run the full catalog, as above, when the models must match the published cells. On a
-GPU, DINOv2 embeddings computed in a different batch composition can differ slightly,
-and the full catalog computes them in the published order. A model is saved only
+Run the full catalog in catalog order, as above, when the models must match the
+published cells. A DINOv2 cell retrained on its own in a fresh process gave image
+probabilities up to 0.023 away from the same cell inside a full catalog run; the
+cause has not been isolated. A model is saved only
 when its cell trains, so a cell served from cache saves nothing; use `--force` or an
 empty `--out`. Every file is reloaded and compared with the fitted model before its
 card is written.

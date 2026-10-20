@@ -1522,8 +1522,8 @@ def compare_cell_predictions(reference: pd.DataFrame, new: pd.DataFrame) -> dict
     """Compare one cell's predictions from a saved model with the same cell in a completed run.
 
     Participant-level metrics are the criterion, since the paper reports at that level. The largest
-    per-image probability difference is reported alongside: a frozen backbone run on a GPU in a
-    different batch composition can move image probabilities slightly without changing a decision.
+    per-image probability difference is reported alongside, since image probabilities can move without
+    changing any participant's decision.
     """
     from parkinson_spiral.metrics import metrics_at_all_levels
 
