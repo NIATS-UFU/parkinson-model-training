@@ -192,5 +192,4 @@ identical probabilities and a few did not. Results can also change with the CPU 
 the BLAS build. Reproducing a published Dogan cell exactly therefore needs the machine
 that produced it: the published numbers come from 8 vCPUs of an Intel Broadwell CPU (a
 GCP `n1-standard-8` with one Tesla T4). The frozen evidence does not record the CPU, so
-check it yourself (`lscpu`, `nproc`). The other three pipelines gave identical results
-on 4 and 8 vCPUs.
+check it yourself (`lscpu`, `nproc`).
