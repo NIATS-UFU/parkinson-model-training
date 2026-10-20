@@ -30,8 +30,9 @@ NCA_RETENTION = 0.17  # Dogan section 5
 INPUT_SIZE = 224  # Dogan's spec; both DenseNet/Xception are ImageNet-default 224x224
 # NCA's optimiser stops at a different iteration when its BLAS products are split across a
 # different number of threads, which moves the fitted projection and every downstream
-# probability. Fixing the count makes a result independent of how many cores the machine has;
-# it does not make it independent of the CPU model or BLAS build.
+# probability. Fixing the count removes most of the dependence on how many cores the machine
+# has, but not all of it: in testing with 4 and 8 cores visible on one CPU model, a few results
+# still differed. Reproducing a result exactly needs the same core count, CPU model and BLAS build.
 NCA_THREADS = 8
 
 
