@@ -74,7 +74,7 @@ notebooks/colab_training.ipynb # Colab GPU training notebook
 data/README.md                 # Expected on-disk dataset layouts
 
 paper_reproduction/            # Self-contained benchmark reproduction package
-  src/parkinson_spiral/        # protocol, catalog, runner, analysis, metrics, compute,
+  src/parkinson_spiral/        # protocol, catalog, runner, analysis, metrics, compute, evaluation, distances,
                                #   data/ (kaggle, folador, hemato, unified, splits, dataset),
                                #   pipelines/ (dinov2_probe, huang_vgg19, dogan_triple, folador_hog),
                                #   recipes/ (aug_none, aug_huang, aug_dogan)
