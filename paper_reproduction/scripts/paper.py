@@ -23,6 +23,7 @@ import platform
 import shutil
 import subprocess
 import sys
+from collections.abc import Mapping
 from dataclasses import asdict
 from pathlib import Path
 
@@ -1013,44 +1014,24 @@ EMBEDDING_METADATA_COLUMNS = (
 )
 
 
-def class_label_to_int() -> dict[str, int]:
-    """The canonical class-label mapping, obtained without requiring torch.
-
-    `CLASS_LABEL_TO_INT` is defined in `parkinson_spiral.data.dataset`, which
-    imports torch at module level because it defines a `torch.utils.data.Dataset`.
-    torch lives in the `[train]` extra, so a Layer-1 install cannot import that
-    module at all, and `build_embedding_frame` is on the Layer-1 path.
-
-    The literal is duplicated here rather than moved to a torch-free module
-    because moving it would edit `src/parkinson_spiral/`, which changes
-    `_source_sha256()` and invalidates every cached cell. The duplication is
-    held in check by a test that forces this fallback and asserts it still
-    equals the canonical mapping.
-    """
-    try:
-        from parkinson_spiral.data.dataset import CLASS_LABEL_TO_INT
-    except ImportError:
-        return {"healthy": 0, "parkinson": 1}
-    return dict(CLASS_LABEL_TO_INT)
-
-
 def build_embedding_frame(
     manifest: pd.DataFrame,
     features: np.ndarray,
     labels: np.ndarray,
+    class_label_to_int: Mapping[str, int],
 ) -> pd.DataFrame:
     """Join extracted feature vectors onto their manifest rows, one row per image.
 
     Pure, so the two ways this can silently go wrong are testable without loading
     a backbone. The extractor's DataLoader runs unshuffled, so row i of `features`
     must be manifest row i; comparing the labels it emitted against the manifest's
-    own is what checks that the correspondence actually held.
+    own is what checks that the correspondence actually held. The caller passes
+    the dataset's own `CLASS_LABEL_TO_INT`, so the labels are compared against the
+    mapping that produced them.
     """
-    CLASS_LABEL_TO_INT = class_label_to_int()
-
     if len(features) != len(manifest):
         raise ValueError(f"extractor returned {len(features)} vectors for {len(manifest)} images")
-    expected = manifest["class_label"].map(CLASS_LABEL_TO_INT).to_numpy()
+    expected = manifest["class_label"].map(class_label_to_int).to_numpy()
     if not np.array_equal(labels, expected):
         raise ValueError("extracted labels do not follow the manifest order; the embeddings are unusable")
 
@@ -1071,7 +1052,7 @@ def export_embeddings_command(args: argparse.Namespace) -> int:
     identity is the point: features from a reimplementation would describe a
     different model than the paper reports.
     """
-    from parkinson_spiral.data.dataset import PreprocessedSpiralDataset
+    from parkinson_spiral.data.dataset import CLASS_LABEL_TO_INT, PreprocessedSpiralDataset
     from parkinson_spiral.pipelines.dinov2_probe import DinoV2Probe
     from parkinson_spiral.recipes import get_recipe
 
@@ -1091,7 +1072,7 @@ def export_embeddings_command(args: argparse.Namespace) -> int:
     probe = DinoV2Probe(vit_size=args.vit_size, batch_size=args.batch_size)
     print(f"extracting {len(manifest)} embeddings with dinov2_{args.vit_size} under {args.recipe}...")
     features, labels = probe._extract(dataset)  # noqa: SLF001 -- the released path is the point
-    frame = build_embedding_frame(manifest, features, labels)
+    frame = build_embedding_frame(manifest, features, labels, CLASS_LABEL_TO_INT)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     frame.to_parquet(args.out, index=False)
@@ -1234,6 +1215,17 @@ def compare_cost_profile_predictions(entries: list[dict], results_dir: Path, wor
     return comparison
 
 
+def format_comparison_line(record: dict) -> str:
+    """One summary line for a profiled cell compared against the completed run."""
+    name = f"{record['pipeline_name']:14s}"
+    if not record.get("compared"):
+        return f"  {name} not compared ({record.get('reason')})"
+    if not record["same_test_images"]:
+        return f"  {name} DIFFERS  the test images are not the completed run's"
+    verdict = "identical" if record["identical_predictions"] else "DIFFERS"
+    return f"  {name} {verdict}  max |proba delta| = {record['max_abs_proba_delta']:.3e}"
+
+
 def _cost_profile_worker(args: argparse.Namespace) -> int:
     """Profile exactly one pipeline. Runs as a child process so the measurement is isolated."""
     from parkinson_spiral.runner import RunPaths, run_cell
@@ -1268,6 +1260,7 @@ def cost_profile_command(args: argparse.Namespace) -> int:
         raise SystemExit(f"manifest not found: {args.manifest}")
 
     specs = cost_profile_specs()
+    _require_cuda(specs)
     args.work_dir.mkdir(parents=True, exist_ok=True)
 
     entries: list[dict] = []
@@ -1337,11 +1330,7 @@ def cost_profile_command(args: argparse.Namespace) -> int:
     if comparison:
         print("\nvs the completed run (same cells, full process context):")
         for record in comparison:
-            if not record.get("compared"):
-                print(f"  {record['pipeline_name']:14s} not compared ({record.get('reason')})")
-                continue
-            verdict = "identical" if record["identical_predictions"] else "DIFFERS"
-            print(f"  {record['pipeline_name']:14s} {verdict}  max |proba delta| = {record['max_abs_proba_delta']:.3e}")
+            print(format_comparison_line(record))
     print(f"\nwrote {args.out}")
     return 0
 

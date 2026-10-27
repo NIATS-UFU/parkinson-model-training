@@ -148,6 +148,14 @@ each host with the same `--shard-count` and a different `--shard-index`, then me
 the output directories. Because runs are keyed by `cell_id`, the shards cannot
 collide.
 
+To match the published cells exactly, run the full catalog in catalog order in one
+process. The DINOv2 backbone is built once per process and then reused, and building
+it draws from torch's random generator. The cells trained with augmentation draw from
+that generator too, so an augmented DINOv2 cell that is the first DINOv2 cell of its
+process (after a resume, under `--cell-id`, or at the start of a shard) can see a
+different random stream than it did in the published run. This follows from how the
+code is written; it has not been measured.
+
 ### Saving and verifying the trained models
 
 `--save-models <dir>` saves the 12 models trained on all of one dataset, one per
@@ -197,6 +205,13 @@ count or to reproduce that deadlock deliberately.
   checksums under `evidence/`. This rewrites provenance artifacts, so run it as a
   deliberate act when publishing a run, not as part of a routine reproduction.
 - `dataset-fingerprint`, `verify-fingerprint` — see step 1 above.
+- `cost-profile` — measure each pipeline's training and inference cost, one fresh
+  process per pipeline. Use it for costs rather than the cost columns of a full
+  catalog run (`fit_seconds`, `infer_latency_ms_per_img`, the memory columns). In a
+  full run the pipelines share one process: DINOv2 and Dogan reuse image features
+  extracted by earlier cells, and memory peaks include what earlier cells allocated.
+  `fit_was_cached` flags only a fit reused whole, so a row with it False can still
+  hold a near-zero time.
 
 ### Which experiments need a GPU
 
@@ -269,3 +284,10 @@ the BLAS build. Reproducing a published Dogan cell exactly therefore needs the m
 that produced it: the published numbers come from 8 vCPUs of an Intel Broadwell CPU (a
 GCP `n1-standard-8` with one Tesla T4). The frozen evidence does not record the CPU, so
 check it yourself (`lscpu`, `nproc`).
+
+`NCA_THREADS` is a fixed count, not the machine's. During the NCA fit and prediction it
+overrides `OPENBLAS_NUM_THREADS` and `OMP_NUM_THREADS`, and it applies to every thread
+pool loaded in the process, OpenMP pools included, not only BLAS. On a host with fewer
+than 8 cores those steps therefore run more threads than there are cores, which can
+slow them. This is deliberate: the fixed count keeps the split of NCA's matrix products
+the same as on the published machine.
