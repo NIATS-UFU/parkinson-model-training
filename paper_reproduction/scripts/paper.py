@@ -1715,6 +1715,55 @@ def verify_models_command(args: argparse.Namespace) -> int:
     return 0 if report["all_same_subject_metrics"] else 1
 
 
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
+
+
+def image_manifest(images: Path) -> pd.DataFrame:
+    """List one image, or the images directly inside a folder, as rows a saved model can score.
+
+    `image_id` is the path relative to the folder, so names stay unique and readable. The class
+    column is required by the dataset loader and unused when predicting, so it holds one fixed value.
+    """
+    if images.is_file():
+        paths, root = [images], images.parent
+    elif images.is_dir():
+        paths, root = sorted(p for p in images.iterdir() if p.suffix.lower() in IMAGE_SUFFIXES), images
+    else:
+        raise FileNotFoundError(f"no image or folder at {images}")
+    if not paths:
+        raise ValueError(f"no images ({', '.join(sorted(IMAGE_SUFFIXES))}) in {images}")
+    return pd.DataFrame({
+        "image_id": [p.relative_to(root).as_posix() for p in paths],
+        "file_path": [str(p) for p in paths],
+        "class_label": "healthy",
+    })
+
+
+def predict_images(pipeline, card: dict, images: pd.DataFrame) -> pd.DataFrame:
+    """Probability of Parkinson's per image, with the preprocessing the model was trained with."""
+    from parkinson_spiral.data.dataset import PreprocessedSpiralDataset
+    from parkinson_spiral.recipes import get_recipe
+    from parkinson_spiral.runner import _configure_reproducibility, _recipe_kwargs_for_spec
+
+    catalog = {cell.cell_id: cell for cell in all_cells()}
+    spec = catalog[next(iter(card["cells"]))]
+    _configure_reproducibility(card["seed"])
+    recipe = get_recipe(spec.recipe_name, **_recipe_kwargs_for_spec(spec))
+    dataset = PreprocessedSpiralDataset(images, recipe, is_train=False, target_column=spec.target_column)
+    proba = pipeline.predict_proba(dataset)
+    return pd.DataFrame({"image_id": images["image_id"].to_numpy(), "p_parkinson": proba[:, 1]})
+
+
+def predict_command(args: argparse.Namespace) -> int:
+    """Score spiral images with one saved model and write the probabilities to a CSV."""
+    pipeline, card = load_released_model(args.model)
+    predictions = predict_images(pipeline, card, image_manifest(args.images))
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    predictions.to_csv(args.out, index=False, lineterminator="\n")
+    print(f"{card['name']}: scored {len(predictions)} images; wrote {args.out}")
+    return 0
+
+
 # ---- statistics and distances ----
 
 
@@ -1887,6 +1936,12 @@ def _build_parser() -> argparse.ArgumentParser:
     verify_models.add_argument("--results", type=Path, default=repo / "results", help="results of that run")
     verify_models.add_argument("--out", type=Path, default=repo / "results" / "verify_models.json")
     verify_models.set_defaults(func=verify_models_command)
+
+    predict = sub.add_parser("predict", help="score spiral images with one saved model")
+    predict.add_argument("--model", type=Path, required=True, help="one saved model's directory (holds model.json)")
+    predict.add_argument("--images", type=Path, required=True, help="a spiral image, or a folder of them")
+    predict.add_argument("--out", type=Path, default=repo / "results" / "predictions.csv")
+    predict.set_defaults(func=predict_command)
 
     statistics = sub.add_parser(
         "statistics",

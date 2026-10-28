@@ -232,3 +232,55 @@ def test_comparison_flags_different_test_images(paper) -> None:
 
     assert result["same_test_images"] is False
     assert result["same_subject_metrics"] is False
+
+
+def _spiral_images(folder: Path, count: int) -> list[str]:
+    """Write small synthetic drawings: half dark strokes on white, half light, so HOG separates them."""
+    from PIL import Image
+
+    folder.mkdir(parents=True, exist_ok=True)
+    rng = np.random.default_rng(0)
+    labels = []
+    for index in range(count):
+        label = "parkinson" if index % 2 else "healthy"
+        ink = rng.random((64, 64)) < (0.3 if label == "parkinson" else 0.05)
+        Image.fromarray(np.where(ink, 0, 255).astype(np.uint8), mode="L").convert("RGB").save(folder / f"d{index}.png")
+        labels.append(label)
+    return labels
+
+
+def test_a_saved_model_scores_a_folder_of_new_images(paper, tmp_path: Path) -> None:
+    """`predict` gives each image the probability the trained pipeline gives it."""
+    pytest.importorskip("skops")
+    from parkinson_spiral.data.dataset import PreprocessedSpiralDataset
+    from parkinson_spiral.pipelines.folador_hog import FoladorHOG
+    from parkinson_spiral.recipes import get_recipe
+
+    labels = _spiral_images(tmp_path / "train", 8)
+    train = paper.image_manifest(tmp_path / "train").assign(class_label=labels)
+    spec = _cell(paper, "folador_hog-kaggle")
+    recipe = get_recipe(spec.recipe_name)
+    pipeline = FoladorHOG(classifier="SVM_linear")
+    pipeline.fit(PreprocessedSpiralDataset(train, recipe, is_train=False), seed=0)
+    directory = paper.save_released_model(spec, pipeline, tmp_path / "models")
+    _spiral_images(tmp_path / "new", 4)
+    new = paper.image_manifest(tmp_path / "new")
+
+    reloaded, card = paper.load_released_model(directory)
+    predictions = paper.predict_images(reloaded, card, new)
+
+    expected = pipeline.predict_proba(PreprocessedSpiralDataset(new, recipe, is_train=False))[:, 1]
+    assert predictions["image_id"].tolist() == ["d0.png", "d1.png", "d2.png", "d3.png"]
+    np.testing.assert_allclose(predictions["p_parkinson"], expected, rtol=0, atol=1e-9)
+
+
+def test_scoring_a_folder_without_images_is_refused(paper, tmp_path: Path) -> None:
+    (tmp_path / "notes.txt").write_text("not an image", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="no images"):
+        paper.image_manifest(tmp_path)
+
+
+def test_scoring_a_missing_path_is_refused(paper, tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError, match="no image or folder"):
+        paper.image_manifest(tmp_path / "absent")
