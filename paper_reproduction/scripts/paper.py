@@ -1455,6 +1455,34 @@ def check_model_saveable(spec: CellSpec) -> None:
         raise ValueError("saving folador_hog with the CNN1D classifier is not supported")
 
 
+def is_linear_svm(fitted) -> bool:
+    """Whether a fitted head is a linear-kernel SVC, which is released as a weight vector."""
+    from sklearn.svm import SVC
+
+    return isinstance(fitted, SVC) and fitted.kernel == "linear"
+
+
+def linear_svm_head(svc):
+    """The decision function of a fitted linear-kernel SVC, without its support vectors.
+
+    A fitted SVC keeps its support vectors, which are the feature vectors of hundreds of training
+    drawings. For a linear kernel its decision is `X @ coef_.T + intercept_`, so the released model
+    keeps only that weight vector and intercept, in a `LinearSVC` that computes the same decision.
+    The pipelines call nothing else on these heads. Decision values agree to float rounding, not
+    bit for bit, because the sum is taken in a different order.
+    """
+    from sklearn.svm import LinearSVC
+
+    if not is_linear_svm(svc):
+        raise ValueError(f"only a fitted linear-kernel SVC can be stored as a weight vector, got {svc!r}")
+    head = LinearSVC()
+    head.coef_ = np.asarray(svc.coef_, dtype=np.float64)
+    head.intercept_ = np.asarray(svc.intercept_, dtype=np.float64)
+    head.classes_ = svc.classes_
+    head.n_features_in_ = svc.n_features_in_
+    return head
+
+
 def _dump_artifact(fitted, path: Path) -> None:
     if path.suffix == ".skops":
         import skops.io as sio
@@ -1511,9 +1539,10 @@ def same_fitted_state(fitted, reloaded) -> bool:
 def save_released_model(spec: CellSpec, pipeline, models_dir: Path) -> Path:
     """Save the fitted pipeline of an off-diagonal cell to `models_dir/<name>/`.
 
-    Every file is reloaded and compared with the in-memory model before the card is written, so
-    a directory with a card holds a model that reloads exactly. The card lists the cells the
-    model serves and the code that trained it.
+    Every file is reloaded and compared with the state that was written before the card is
+    written, so a directory with a card holds a model that reloads exactly. A linear SVM head is
+    written as its weight vector (`linear_svm_head`), so no file carries training drawings'
+    features. The card lists the cells the model serves and the code that trained it.
     """
     from parkinson_spiral.runner import _package_versions, _source_sha256
 
@@ -1527,8 +1556,12 @@ def save_released_model(spec: CellSpec, pipeline, models_dir: Path) -> Path:
     directory.mkdir(parents=True)
 
     files = {}
+    weight_vector_heads = []
     for filename, attribute in MODEL_ARTIFACTS[spec.pipeline_name].items():
         fitted = getattr(pipeline, attribute)
+        if is_linear_svm(fitted):
+            fitted = linear_svm_head(fitted)
+            weight_vector_heads.append(filename)
         path = directory / filename
         _dump_artifact(fitted, path)
         if not same_fitted_state(fitted, _load_artifact(path)):
@@ -1538,7 +1571,7 @@ def save_released_model(spec: CellSpec, pipeline, models_dir: Path) -> Path:
     served = [cell for cell in all_cells() if released_model_name(cell) == name]
     repo = Path(__file__).resolve().parents[1]
     card = {
-        "schema": 1,
+        "schema": 2,
         "name": name,
         "pipeline_name": spec.pipeline_name,
         "recipe_name": spec.recipe_name,
@@ -1548,6 +1581,7 @@ def save_released_model(spec: CellSpec, pipeline, models_dir: Path) -> Path:
         "seed": spec.seed,
         "cells": {cell.cell_id: cell.test_source for cell in served},
         "files": files,
+        "weight_vector_heads": weight_vector_heads,
         "public_backbones": get_pipeline_class(spec.pipeline_name).MODEL_WEIGHT_IDENTIFIERS,
         "public_backbone_checksums": getattr(pipeline, "_model_weight_checksums", {}),
         "git_commit": _git_value(repo.parent, "rev-parse", "HEAD"),

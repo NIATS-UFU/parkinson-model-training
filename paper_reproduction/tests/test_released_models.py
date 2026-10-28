@@ -57,7 +57,7 @@ def test_cells_that_hold_data_out_release_no_model(paper) -> None:
     assert all(paper.released_model_name(cell) is None for cell in held_out)
 
 
-def test_saved_model_reloads_and_predicts_identically(paper, tmp_path: Path) -> None:
+def test_saved_model_reloads_and_predicts_the_same_decisions(paper, tmp_path: Path) -> None:
     pytest.importorskip("skops")
     pipeline, features = _fitted_folador(paper)
     spec = _cell(paper, "folador_hog-kaggle")
@@ -70,14 +70,14 @@ def test_saved_model_reloads_and_predicts_identically(paper, tmp_path: Path) -> 
         for cell in all_cells()
         if paper.released_model_name(cell) == "folador_hog-kaggle"
     }
-    assert paper.same_fitted_state(pipeline._model, reloaded._model)
-    np.testing.assert_array_equal(
-        reloaded._model.decision_function(features), pipeline._model.decision_function(features)
+    assert card["weight_vector_heads"] == ["classifier.skops"]
+    np.testing.assert_allclose(
+        reloaded._model.decision_function(features), pipeline._model.decision_function(features), rtol=0, atol=1e-12
     )
 
 
 def test_two_part_model_with_a_random_state_round_trips(paper, tmp_path: Path) -> None:
-    """Dogan's head is an NCA, which keeps a RandomState, and an SVM."""
+    """Dogan's head is an NCA, which keeps a RandomState, and an SVM saved as its weight vector."""
     pytest.importorskip("skops")
     from parkinson_spiral.pipelines.dogan_triple import DoganTriple
 
@@ -88,8 +88,28 @@ def test_two_part_model_with_a_random_state_round_trips(paper, tmp_path: Path) -
 
     directory = paper.save_released_model(_cell(paper, "dogan_triple-hemato"), pipeline, tmp_path)
 
-    for filename, attribute in paper.MODEL_ARTIFACTS["dogan_triple"].items():
-        assert paper.same_fitted_state(getattr(pipeline, attribute), paper._load_artifact(directory / filename))
+    assert paper.same_fitted_state(pipeline._nca, paper._load_artifact(directory / "nca.skops"))
+    assert paper.same_fitted_state(paper.linear_svm_head(pipeline._svm), paper._load_artifact(directory / "svm.skops"))
+
+
+def test_saved_linear_svm_keeps_no_training_rows(paper, tmp_path: Path) -> None:
+    """The released file holds the weight vector and intercept, not the support vectors."""
+    pytest.importorskip("skops")
+    pipeline, features = _fitted_folador(paper)
+
+    directory = paper.save_released_model(_cell(paper, "folador_hog-kaggle"), pipeline, tmp_path)
+    saved = paper._load_artifact(directory / "classifier.skops")
+
+    assert not hasattr(saved, "support_vectors_")
+    assert all(np.ndim(value) == 0 or np.shape(value)[0] != len(features) for value in vars(saved).values())
+
+
+def test_linear_svm_head_refuses_a_nonlinear_kernel(paper) -> None:
+    features, labels = _xy()
+    rbf = SVC(kernel="rbf", random_state=0).fit(features, labels)
+
+    with pytest.raises(ValueError, match="only a fitted linear-kernel SVC"):
+        paper.linear_svm_head(rbf)
 
 
 def test_torch_weights_round_trip_as_a_state_dict(paper, tmp_path: Path) -> None:

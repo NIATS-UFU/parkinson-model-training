@@ -167,8 +167,8 @@ extra (`skops`).
 | Pipeline | Saved files | Not saved (public, downloaded at use) |
 |---|---|---|
 | `dinov2_probe` | `probe.skops` (logistic regression) | DINOv2 ViT-B/14 |
-| `folador_hog` | `classifier.skops` (linear SVM) | none |
-| `dogan_triple` | `nca.skops`, `svm.skops` | DenseNet201, Xception, NASNetMobile |
+| `folador_hog` | `classifier.skops` (linear SVM, as its weight vector) | none |
+| `dogan_triple` | `nca.skops`, `svm.skops` (linear SVM, as its weight vector) | DenseNet201, Xception, NASNetMobile |
 | `huang_vgg19` | `vgg19_state_dict.pt` (the fine-tuned network) | none |
 
 ```bash
@@ -181,8 +181,15 @@ published cells. A DINOv2 cell retrained on its own in a fresh process gave imag
 probabilities up to 0.023 away from the same cell inside a full catalog run; the
 cause has not been isolated. A model is saved only
 when its cell trains, so a cell served from cache saves nothing; use `--force` or an
-empty `--out`. Every file is reloaded and compared with the fitted model before its
-card is written.
+empty `--out`. Every file is reloaded and compared with the state that was written
+before its card is written.
+
+A fitted linear SVM keeps its support vectors, the feature vectors of hundreds of
+training drawings. The saved file keeps only the weight vector and intercept, in a
+`LinearSVC` that computes the same decision, and the card lists those files under
+`weight_vector_heads`. So no saved model holds a training drawing's features. Its
+decision values match the fitted SVM to float rounding rather than bit for bit, and
+`verify-models` reports that difference.
 
 `verify-models` reloads each model, re-predicts the cells it serves, and compares
 them with the run that trained it. It exits non-zero if any participant-level metric
