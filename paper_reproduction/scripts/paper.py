@@ -1185,9 +1185,9 @@ def export_embeddings_command(args: argparse.Namespace) -> int:
 # ---- cost-profile ----
 
 # The cost profile runs one representative training configuration per pipeline: its native
-# recipe, trained on the largest dataset (Moura) and evaluated off-diagonal on Zham. Each is an
-# EXISTING catalog cell rather than a bespoke config, so the cost figures describe a run the
-# paper actually reports and the predictions can be checked against it.
+# recipe, trained on the largest dataset (Moura, key `hemato`) and evaluated off-diagonal on Zham
+# (key `kaggle`). Each is an EXISTING catalog cell rather than a bespoke config, so the cost
+# figures describe a run the paper actually reports and the predictions can be checked against it.
 COST_PROFILE_TRAIN = "hemato"
 COST_PROFILE_TEST = "kaggle"
 COST_PROFILE_SPLIT = "cross-dataset"
