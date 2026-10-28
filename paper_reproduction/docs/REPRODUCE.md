@@ -198,6 +198,15 @@ checks each file against its card. skops loads only scikit-learn types it trusts
 and the network loads as tensors only, so a saved model cannot run code when it is
 loaded.
 
+`predict` scores new drawings with one saved model: every image directly inside a
+folder (or one image), preprocessed as in training, written as `image_id,p_parkinson`.
+The paper's participant decision is the mean over that participant's drawings,
+thresholded at 0.5.
+
+```bash
+python scripts/paper.py predict --model models/dinov2_probe-hemato --images path/to/spirals/ --out predictions.csv
+```
+
 ### Tuning DataLoader workers
 
 `SPIRAL_NUM_WORKERS` overrides the platform worker policy unconditionally. The

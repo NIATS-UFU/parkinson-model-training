@@ -5,10 +5,6 @@ paper_artifacts/
 runs/
 results/
 
-# Exported model folder (built locally by models/export_hemato_probe.py; the
-# distributed copy lives on the Hugging Face Hub, not in git)
-models/exported/
-
 # Python
 __pycache__/
 *.py[cod]

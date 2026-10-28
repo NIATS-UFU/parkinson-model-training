@@ -79,7 +79,6 @@ paper_reproduction/            # Self-contained benchmark reproduction package
                                #   pipelines/ (dinov2_probe, huang_vgg19, dogan_triple, folador_hog),
                                #   recipes/ (aug_none, aug_huang, aug_dogan)
   scripts/paper.py             # Single CLI for every reproduction subcommand
-  models/                      # Released probe export, predict, and HF upload scripts
   evidence/                    # Frozen provenance artifacts — see the warning below
   docs/                        # DATA, REPRODUCE, DECISIONS, PROVENANCE, GCP_COLLABORATOR
   tests/                       # Reproduction suite
@@ -108,8 +107,8 @@ paper's name; in code, paths and commands, use the key verbatim.
 **`hemato` is a frozen identifier and must not be renamed.** It is not merely a label: it is hashed
 into `cell_id` (`protocol.py`) for 46 of the 97 benchmark cells, into every `image_id` and
 `subject_id` (`data/unified.py`), and it gates the `VALID_DATASETS` / `VALID_SOURCES` validators. It
-is also the on-disk directory name, the `main-cli create-manifest` argument, the exported
-`parkinson_spiral_dinov2_hemato.skops` filename, and the published Hugging Face repository id.
+is also the on-disk directory name, the `main-cli create-manifest` argument, and part of the
+released model names (`<pipeline>-hemato`).
 Renaming it would invalidate the published results and require re-running the full benchmark on
 IRB-restricted data. Refer to the cohort as *Moura* in documentation; leave the token alone.
 

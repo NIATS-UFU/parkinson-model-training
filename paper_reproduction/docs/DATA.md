@@ -163,9 +163,9 @@ reported metric is subject-level, so nothing published depends on this.
 Binary, subject-level: `class_label ∈ {healthy, parkinson}`, with `parkinson`
 as the positive class. The task is always the spiral drawing (`task_filter="spiral"`).
 
-## A note on the released model
+## A note on the trained models
 
-The released DINOv2 probe (see [`../models/MODEL_CARD.md`](../models/MODEL_CARD.md))
-is fit on 100% of Moura. Because Moura is IRB-restricted, you must obtain it from
-NIATS-UFU to re-run `models/export_hemato_probe.py` yourself. The serialized probe
-on the Hugging Face Hub does not contain or expose any Moura images.
+The four published models are fit on all of Moura. No model file holds an image or a
+single drawing's features: the DINOv2 probe is a logistic regression, the two linear
+SVMs are stored as their weight vector, Dogan's NCA as its projection matrix, and Huang
+VGG19 as its network weights. Rebuilding them needs Moura, on request from NIATS-UFU.
