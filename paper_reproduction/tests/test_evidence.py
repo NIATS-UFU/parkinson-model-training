@@ -51,3 +51,15 @@ def test_run_device_policy_reports_a_tensorflow_gpu(paper: ModuleType):
     devices = "[PhysicalDevice(name='/physical_device:GPU:0', device_type='GPU')]"
 
     assert paper._run_device_policy("cuda", devices)["dogan_triple_nasnetmobile"] == "TensorFlow GPU"
+
+
+def test_checksum_names_do_not_depend_on_where_the_folders_sit(paper: ModuleType, tmp_path):
+    repo, out, results = tmp_path / "repo", tmp_path / "run" / "evidence", tmp_path / "run" / "results"
+
+    names = [
+        paper._checksum_name(out / "catalog.json", out, results, repo),
+        paper._checksum_name(results / "predictions" / "abc.parquet", out, results, repo),
+        paper._checksum_name(repo / "paper_reproduction" / "uv.lock", out, results, repo),
+    ]
+
+    assert names == ["catalog.json", "results/predictions/abc.parquet", "paper_reproduction/uv.lock"]

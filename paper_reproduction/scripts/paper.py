@@ -597,6 +597,22 @@ def _display_path(path: Path, repo: Path) -> str:
         return str(path.resolve())
 
 
+def _checksum_name(path: Path, out: Path, results: Path, repo: Path) -> str:
+    """Name a file in `checksums.sha256` so the list holds wherever the folders sit.
+
+    Evidence files are named relative to the evidence folder, result files as
+    `results/<path>`, repository files relative to its root, and anything else
+    by its absolute path, always with `/`. The evidence and results folders are
+    often written outside the repository, and an absolute path would record the
+    producing machine's layout instead.
+    """
+    resolved = path.resolve()
+    for root, prefix in ((out, Path()), (results, Path("results")), (repo, Path())):
+        if resolved.is_relative_to(root.resolve()):
+            return (prefix / resolved.relative_to(root.resolve())).as_posix()
+    return resolved.as_posix()
+
+
 def _git_value(repo: Path, *args: str) -> str | None:
     completed = subprocess.run(
         ["git", *args],
@@ -864,7 +880,7 @@ def freeze_evidence_command(args: argparse.Namespace) -> int:
         checksum_paths.extend(sorted(path for path in args.results.rglob("*") if path.is_file()))
     unique_checksum_paths = dict.fromkeys(path.resolve() for path in checksum_paths if path.is_file())
     checksum_lines = [
-        f"{_sha256(path)}  {_display_path(path, repo)}"
+        f"{_sha256(path)}  {_checksum_name(path, args.out, args.results, repo)}"
         for path in unique_checksum_paths
         if path != (args.out / "checksums.sha256").resolve()
     ]
@@ -880,7 +896,9 @@ def freeze_evidence_command(args: argparse.Namespace) -> int:
         "- `model_configurations.json`: declared hyperparameters and methods notes.\n"
         "- `repository.patch`: exact uncommitted code state relative to the recorded commit.\n"
         "- manuscript PDF: frozen submitted manuscript snapshot when supplied.\n"
-        "- `checksums.sha256`: hashes for lockfiles, manifest, and generated result artifacts.\n"
+        "- `checksums.sha256`: hashes for lockfiles, manifest, and generated result artifacts. Files in this\n"
+        "  folder are named relative to it, result files as `results/<path>`, and lockfiles relative to the\n"
+        "  repository root.\n"
     )
     (args.out / "README.md").write_text(readme, encoding="utf-8", newline="\n")
     print(f"wrote frozen evidence -> {args.out}")
