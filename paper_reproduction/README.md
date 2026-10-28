@@ -89,7 +89,7 @@ existing local predictions are skipped unless `--force` is passed.
 ## Trained models
 
 The four models trained on all of Moura, one per pipeline, are published openly at
-<MODEL RECORD DOI>. Moura itself is available only on request, so these are the
+[doi:10.5281/zenodo.23748799](https://doi.org/10.5281/zenodo.23748799). Moura itself is available only on request, so these are the
 models nobody can rebuild without it; the eight trained on Zham or Folador can be
 rebuilt from the public data with `reproduce --save-models` (see
 [`docs/REPRODUCE.md`](docs/REPRODUCE.md)). Unzip each model archive into one
