@@ -38,7 +38,10 @@ from the filename token.
 
 A filename that does not match that pattern **raises** rather than being skipped, so
 a mis-packed release fails loudly instead of silently producing a short manifest.
-The release is already de-duplicated, so no fingerprint dedup is applied to it.
+The per-session dedup of the cropper layouts does not apply to the release tree. The
+release does hold 18 byte-identical pairs: sheets 21 and 22 of V5 and of V17 are one
+scan filed twice. The global exact-image dedup below keeps one of each, so its 6,990
+files give 6,972 Moura rows.
 
 A dataset that is absent is simply skipped when you build the manifest, so a
 Zham+Folador-only `<data-root>` reproduces every cell that does not involve Moura.
