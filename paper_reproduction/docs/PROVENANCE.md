@@ -69,6 +69,13 @@ digits that AUC's ranking is sensitive to but the 0.5-threshold metrics are not)
 and reproducible. No conclusion in the paper depends on these third-decimal AUC
 differences — the H2 finding (poor cross-dataset transfer) is unchanged.
 
+## The commit the frozen evidence names
+
+`evidence/environment.json` records commit `8d2aed1`, the commit that froze the evidence. The
+97 results it describes were produced at `e18573a`. Only the scripts, tests and documentation
+changed between the two: the `parkinson_spiral` package is byte-identical, so both give the code
+signature `e112a2ad3213…` that every result cell records.
+
 ## Seed
 
 `DEFAULT_SEED = 20260516` is used for every split, every model fit, and every

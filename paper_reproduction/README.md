@@ -106,7 +106,9 @@ python scripts/paper.py predict --model models/dinov2_probe-hemato --images path
 
 `predict` writes the probability of Parkinson's for each image, preprocessed as in
 training. The paper decides per participant: the mean over that participant's
-drawings, thresholded at 0.5.
+drawings, thresholded at 0.5. `predict` does not know which drawings belong to whom,
+so it makes no per-participant decision: score one folder per participant (or name the
+files so `image_id`, the file name, shows the participant), then average and threshold.
 
 > These are **reference checkpoints for research, not a screening or diagnostic
 > tool**. The paper's central finding is that these classifiers do not transfer
