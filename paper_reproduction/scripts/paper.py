@@ -234,6 +234,7 @@ def _model_saver(cells: list[CellSpec], models_dir: Path | None):
     names = {released_model_name(cell) for cell in cells} - {None}
     if not names:
         raise SystemExit("--save-models given, but no selected cell trains a released (off-diagonal) model")
+    check_one_model_per_name(all_cells())
     for cell in cells:
         if released_model_name(cell) is not None:
             check_model_saveable(cell)
@@ -677,10 +678,15 @@ def _hardware_profile() -> dict[str, str]:
     if sys.platform == "darwin":
         profile = _macos_hardware_profile(_command_output("system_profiler", "SPHardwareDataType"))
     elif sys.platform == "linux":
-        profile = _linux_hardware_profile(
-            Path("/proc/cpuinfo").read_text(encoding="utf-8"),
-            Path("/proc/meminfo").read_text(encoding="utf-8"),
-        )
+        # A container can restrict /proc; record no machine fields rather than abort the freeze,
+        # as on macOS when system_profiler is absent.
+        try:
+            cpuinfo = Path("/proc/cpuinfo").read_text(encoding="utf-8")
+            meminfo = Path("/proc/meminfo").read_text(encoding="utf-8")
+        except OSError:
+            profile = {}
+        else:
+            profile = _linux_hardware_profile(cpuinfo, meminfo)
     else:
         profile = {}
     gpu = _command_output("nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader")
@@ -1432,6 +1438,9 @@ MODEL_ARTIFACTS = {
     "huang_vgg19": {"vgg19_state_dict.pt": "_model"},
 }
 MODEL_CARD = "model.json"
+MODEL_CARD_SCHEMA = 2
+# Schema 1 cards load unchanged: schema 2 only adds the `weight_vector_heads` list.
+SUPPORTED_MODEL_CARD_SCHEMAS = (1, 2)
 
 
 def released_model_name(spec: CellSpec) -> str | None:
@@ -1443,6 +1452,22 @@ def released_model_name(spec: CellSpec) -> str | None:
     if spec.split_source != "cross-dataset":
         return None
     return f"{spec.pipeline_name}-{spec.train_source}"
+
+
+def check_one_model_per_name(cells: list[CellSpec]) -> None:
+    """Raise if two cells share a released model name but would train different models.
+
+    One saved model serves every off-diagonal cell trained on the same dataset, so those cells
+    must agree on everything that defines the fit; otherwise the first cell trained would win.
+    """
+    seen: dict[str, tuple] = {}
+    for cell in cells:
+        name = released_model_name(cell)
+        if name is None:
+            continue
+        settings = (cell.recipe_name, cell.pipeline_kwargs, cell.task_filter, cell.seed)
+        if seen.setdefault(name, settings) != settings:
+            raise ValueError(f"cells named {name} train different models: {seen[name]} and {settings}")
 
 
 def check_model_saveable(spec: CellSpec) -> None:
@@ -1571,7 +1596,7 @@ def save_released_model(spec: CellSpec, pipeline, models_dir: Path) -> Path:
     served = [cell for cell in all_cells() if released_model_name(cell) == name]
     repo = Path(__file__).resolve().parents[1]
     card = {
-        "schema": 2,
+        "schema": MODEL_CARD_SCHEMA,
         "name": name,
         "pipeline_name": spec.pipeline_name,
         "recipe_name": spec.recipe_name,
@@ -1601,6 +1626,11 @@ def load_released_model(directory: Path):
     from parkinson_spiral.pipelines import accelerator_device, get_pipeline
 
     card = json.loads((directory / MODEL_CARD).read_text(encoding="utf-8"))
+    if card.get("schema") not in SUPPORTED_MODEL_CARD_SCHEMAS:
+        raise ValueError(
+            f"{directory / MODEL_CARD} has schema {card.get('schema')!r}; this code reads schemas "
+            f"{', '.join(map(str, SUPPORTED_MODEL_CARD_SCHEMAS))}"
+        )
     for filename, expected in card["files"].items():
         if _sha256(directory / filename) != expected:
             raise ValueError(f"{directory / filename} does not match the checksum in its {MODEL_CARD}")
@@ -1692,7 +1722,10 @@ def verify_models_command(args: argparse.Namespace) -> int:
             record = {"model": card["name"], "cell_id": cell_id, "test_source": spec.test_source}
             record.update(compare_cell_predictions(pd.read_parquet(reference_path), new))
             records.append(record)
-            verdict = "same" if record["same_subject_metrics"] else "DIFFERENT"
+            if not record["same_test_images"]:
+                verdict = "DIFFERENT (the manifest's test images are not the reference run's)"
+            else:
+                verdict = "same" if record["same_subject_metrics"] else "DIFFERENT"
             delta = record["max_abs_proba_delta"]
             delta_s = "n/a" if delta is None else f"{delta:.3e}"
             print(

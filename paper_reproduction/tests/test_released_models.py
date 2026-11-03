@@ -6,6 +6,8 @@ silently differ from the one behind the paper: a file that reloads to a differen
 changed after saving, an overwritten model, and a comparison that hides a changed decision.
 """
 
+import json
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -146,6 +148,46 @@ def test_a_file_changed_after_saving_is_refused(paper, tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="does not match the checksum"):
         paper.load_released_model(directory)
+
+
+def test_a_model_card_of_an_unknown_schema_is_refused(paper, tmp_path: Path) -> None:
+    pytest.importorskip("skops")
+    pipeline, _ = _fitted_folador(paper)
+    directory = paper.save_released_model(_cell(paper, "folador_hog-kaggle"), pipeline, tmp_path)
+    card_path = directory / paper.MODEL_CARD
+    card = json.loads(card_path.read_text(encoding="utf-8"))
+    card_path.write_text(json.dumps({**card, "schema": 3}), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="has schema 3; this code reads schemas 1, 2"):
+        paper.load_released_model(directory)
+
+
+def test_a_schema_1_model_card_still_loads(paper, tmp_path: Path) -> None:
+    """Cards written before `weight_vector_heads` was added read the same way."""
+    pytest.importorskip("skops")
+    pipeline, features = _fitted_folador(paper)
+    directory = paper.save_released_model(_cell(paper, "folador_hog-kaggle"), pipeline, tmp_path)
+    card_path = directory / paper.MODEL_CARD
+    card = json.loads(card_path.read_text(encoding="utf-8"))
+    card_path.write_text(json.dumps({**card, "schema": 1}), encoding="utf-8")
+
+    reloaded, _ = paper.load_released_model(directory)
+
+    np.testing.assert_allclose(
+        reloaded._model.decision_function(features), pipeline._model.decision_function(features), rtol=0, atol=1e-12
+    )
+
+
+def test_the_catalog_trains_one_model_per_released_name(paper) -> None:
+    paper.check_one_model_per_name(all_cells())
+
+
+def test_two_cells_sharing_a_name_but_not_a_fit_are_refused(paper) -> None:
+    cell = _cell(paper, "folador_hog-kaggle")
+    other = replace(cell, test_source="hemato", pipeline_kwargs={"classifier": "KNN"})
+
+    with pytest.raises(ValueError, match="cells named folador_hog-kaggle train different models"):
+        paper.check_one_model_per_name([cell, other])
 
 
 def test_saving_refuses_to_overwrite(paper, tmp_path: Path) -> None:
