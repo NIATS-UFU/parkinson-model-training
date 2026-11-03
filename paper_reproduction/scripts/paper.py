@@ -5,6 +5,10 @@ Usage:
     python scripts/paper.py reproduce --manifest results/manifest.parquet --out results
     python scripts/paper.py regenerate --results results --out paper_artifacts
     python scripts/paper.py verify-catalog --results results
+    python scripts/paper.py export-embeddings --manifest results/manifest.parquet \
+        --out results/embeddings.parquet
+    python scripts/paper.py cost-profile --manifest results/manifest.parquet \
+        --out results/cost_profile.json --compare results
 """
 
 import argparse
@@ -953,6 +957,350 @@ def verify_fingerprint_command(args: argparse.Namespace) -> int:
     return 0
 
 
+EMBEDDING_METADATA_COLUMNS = (
+    "image_id",
+    "dataset",
+    "subject_id",
+    "session_id",
+    "drawing_type",
+    "class_label",
+    "cv_fold",
+)
+
+
+def class_label_to_int() -> dict[str, int]:
+    """The canonical class-label mapping, obtained without requiring torch.
+
+    `CLASS_LABEL_TO_INT` is defined in `parkinson_spiral.data.dataset`, which
+    imports torch at module level because it defines a `torch.utils.data.Dataset`.
+    torch lives in the `[train]` extra, so a Layer-1 install cannot import that
+    module at all, and `build_embedding_frame` is on the Layer-1 path.
+
+    The literal is duplicated here rather than moved to a torch-free module
+    because moving it would edit `src/parkinson_spiral/`, which changes
+    `_source_sha256()` and invalidates every cached cell. The duplication is
+    held in check by a test that forces this fallback and asserts it still
+    equals the canonical mapping.
+    """
+    try:
+        from parkinson_spiral.data.dataset import CLASS_LABEL_TO_INT
+    except ImportError:
+        return {"healthy": 0, "parkinson": 1}
+    return dict(CLASS_LABEL_TO_INT)
+
+
+def build_embedding_frame(
+    manifest: pd.DataFrame,
+    features: np.ndarray,
+    labels: np.ndarray,
+) -> pd.DataFrame:
+    """Join extracted feature vectors onto their manifest rows, one row per image.
+
+    Pure, so the two ways this can silently go wrong are testable without loading
+    a backbone. The extractor's DataLoader runs unshuffled, so row i of `features`
+    must be manifest row i; comparing the labels it emitted against the manifest's
+    own is what checks that the correspondence actually held.
+    """
+    CLASS_LABEL_TO_INT = class_label_to_int()
+
+    if len(features) != len(manifest):
+        raise ValueError(f"extractor returned {len(features)} vectors for {len(manifest)} images")
+    expected = manifest["class_label"].map(CLASS_LABEL_TO_INT).to_numpy()
+    if not np.array_equal(labels, expected):
+        raise ValueError("extracted labels do not follow the manifest order; the embeddings are unusable")
+
+    return pd.concat(
+        [
+            manifest[list(EMBEDDING_METADATA_COLUMNS)].reset_index(drop=True),
+            pd.DataFrame(features, columns=[f"f{i:03d}" for i in range(features.shape[1])]),
+        ],
+        axis=1,
+    )
+
+
+def export_embeddings_command(args: argparse.Namespace) -> int:
+    """Export the frozen DINOv2 CLS embedding of every manifest image.
+
+    Runs the released `DinoV2Probe` feature extractor unchanged, so the vectors
+    written here are exactly the ones the published probe is fitted on. That
+    identity is the point: features from a reimplementation would describe a
+    different model than the paper reports.
+    """
+    from parkinson_spiral.data.dataset import PreprocessedSpiralDataset
+    from parkinson_spiral.pipelines.dinov2_probe import DinoV2Probe
+    from parkinson_spiral.recipes import get_recipe
+
+    if not args.manifest.is_file():
+        print(f"ERROR: manifest not found: {args.manifest}", file=sys.stderr)
+        return 1
+
+    manifest = pd.read_parquet(args.manifest)
+    if args.task_filter != "both":
+        manifest = manifest[manifest["drawing_type"] == args.task_filter]
+    manifest = manifest.reset_index(drop=True)
+    if manifest.empty:
+        raise SystemExit(f"no manifest rows left after task filter {args.task_filter!r}")
+
+    recipe = get_recipe(args.recipe)
+    dataset = PreprocessedSpiralDataset(manifest, recipe, is_train=False)
+    probe = DinoV2Probe(vit_size=args.vit_size, batch_size=args.batch_size)
+    print(f"extracting {len(manifest)} embeddings with dinov2_{args.vit_size} under {args.recipe}...")
+    features, labels = probe._extract(dataset)  # noqa: SLF001 -- the released path is the point
+    frame = build_embedding_frame(manifest, features, labels)
+
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    frame.to_parquet(args.out, index=False)
+
+    sidecar = {
+        "backbone": f"dinov2_{args.vit_size}",
+        "backbone_weight_checksums": getattr(probe, "_model_weight_checksums", {}),
+        "recipe": args.recipe,
+        "image_size": recipe.meta.image_size,
+        "task_filter": args.task_filter,
+        "embedding_dim": int(features.shape[1]),
+        "n_images": int(len(frame)),
+        "n_subjects": int(frame["subject_id"].nunique()),
+        "images_per_dataset": frame.groupby("dataset").size().to_dict(),
+        "manifest_sha256": _sha256(args.manifest),
+    }
+    sidecar_path = args.out.with_suffix(".json")
+    sidecar_path.write_text(json.dumps(sidecar, indent=2, sort_keys=True), encoding="utf-8")
+
+    print(f"wrote {len(frame)} x {features.shape[1]}-d embeddings -> {args.out}")
+    print(f"metadata -> {sidecar_path}")
+    print(f"datasets: {sidecar['images_per_dataset']}, subjects: {sidecar['n_subjects']}")
+    return 0
+
+
+# ---- cost-profile ----
+
+# The cost profile runs one representative training configuration per pipeline: its native
+# recipe, trained on the largest dataset (Moura) and evaluated off-diagonal on Zham. Each is an
+# EXISTING catalog cell rather than a bespoke config, so the cost figures describe a run the
+# paper actually reports and the predictions can be checked against it.
+COST_PROFILE_TRAIN = "hemato"
+COST_PROFILE_TEST = "kaggle"
+COST_PROFILE_SPLIT = "cross-dataset"
+
+COST_PROFILE_FIELDS = (
+    "cell_id",
+    "pipeline_name",
+    "recipe_name",
+    "train_source",
+    "test_source",
+    "split_source",
+    "n_train_images",
+    "n_test_images",
+    "n_train_subjects",
+    "n_test_subjects",
+    "fit_seconds",
+    "fit_was_cached",
+    "predict_seconds",
+    "infer_latency_ms_per_img",
+    "accelerator_device",
+    "gpu_baseline_mb",
+    "gpu_peak_mb",
+    "gpu_peak_delta_mb",
+    "gpu_peak_reserved_mb",
+    "host_rss_peak_mb",
+    "subject_accuracy",
+    "subject_auc",
+    "python_version",
+    "platform",
+)
+
+
+def _plain(value):
+    """Coerce numpy scalars to JSON-serialisable Python types."""
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, np.floating):
+        return float(value)
+    if isinstance(value, np.bool_):
+        return bool(value)
+    return value
+
+
+def cost_profile_specs() -> list[CellSpec]:
+    """The four catalog cells the cost profile runs, one per pipeline in its native recipe."""
+    native = {(pipeline, recipe) for pipeline, recipe, _ in NATIVE}
+    chosen: dict[str, CellSpec] = {}
+    for cell in all_cells():
+        if (cell.pipeline_name, cell.recipe_name) not in native:
+            continue
+        if (cell.train_source, cell.test_source, cell.split_source) != (
+            COST_PROFILE_TRAIN,
+            COST_PROFILE_TEST,
+            COST_PROFILE_SPLIT,
+        ):
+            continue
+        if cell.pipeline_name in chosen:
+            raise ValueError(f"catalog holds two {cell.pipeline_name} cells matching the cost-profile config")
+        chosen[cell.pipeline_name] = cell
+    missing = sorted({pipeline for pipeline, _, _ in NATIVE} - set(chosen))
+    if missing:
+        raise ValueError(f"no catalog cell matches the cost-profile config for: {missing}")
+    return [chosen[pipeline] for pipeline, _, _ in NATIVE]
+
+
+def build_cost_profile_entry(row: dict, pipeline_class) -> dict:
+    """Reduce a `run_cell` row to the cost fields, plus what the H4 cost argument counts.
+
+    `fit_was_cached` must be False. The profile exists to measure a real fit in a process that
+    ran nothing else, so a reused fit means the isolation this command promises did not happen
+    and the numbers would describe a cache lookup.
+    """
+    if row.get("fit_was_cached"):
+        raise ValueError(f"cell {row.get('cell_id')} reused a cached fit; a cost profile must measure a real one")
+    entry = {field: _plain(row.get(field)) for field in COST_PROFILE_FIELDS}
+    entry["free_hyperparameters"] = list(pipeline_class.FREE_HYPERPARAMETERS)
+    entry["n_free_hyperparameters"] = len(pipeline_class.FREE_HYPERPARAMETERS)
+    entry["training_regime"] = TRAINING_REGIME.get(row.get("pipeline_name"))
+    return entry
+
+
+def compare_cost_profile_predictions(entries: list[dict], results_dir: Path, work_dir: Path) -> list[dict]:
+    """Compare each profiled cell against the same cell in a completed run.
+
+    Nearly free evidence, because the profile retrains real catalog cells in a process that ran
+    nothing else beforehand. Any difference from the same cell inside a full run is what
+    execution context alone is worth.
+    """
+    comparison = []
+    for entry in entries:
+        cell_id = entry["cell_id"]
+        reference = results_dir / "predictions" / f"{cell_id}.parquet"
+        profiled = work_dir / cell_id / "predictions" / f"{cell_id}.parquet"
+        record = {"cell_id": cell_id, "pipeline_name": entry["pipeline_name"]}
+        if not reference.is_file() or not profiled.is_file():
+            comparison.append({**record, "compared": False, "reason": "predictions missing on one side"})
+            continue
+        ref = pd.read_parquet(reference).set_index("image_id").sort_index()
+        new = pd.read_parquet(profiled).set_index("image_id").sort_index()
+        same_images = bool(ref.index.equals(new.index))
+        delta = float((new["y_proba_pos"] - ref["y_proba_pos"]).abs().max()) if same_images else None
+        comparison.append({
+            **record,
+            "compared": True,
+            "same_test_images": same_images,
+            "max_abs_proba_delta": delta,
+            "identical_predictions": bool(same_images and delta == 0.0),
+        })
+    return comparison
+
+
+def _cost_profile_worker(args: argparse.Namespace) -> int:
+    """Profile exactly one pipeline. Runs as a child process so the measurement is isolated."""
+    from parkinson_spiral.runner import RunPaths, run_cell
+
+    spec = next((cell for cell in cost_profile_specs() if cell.cell_id == args.worker_cell), None)
+    if spec is None:
+        raise SystemExit(f"{args.worker_cell} is not one of the cost-profile cells")
+
+    paths = RunPaths(manifest=args.manifest, outputs_dir=args.work_dir / spec.cell_id)
+    row = run_cell(spec, paths, force=True)
+    entry = build_cost_profile_entry(row, get_pipeline_class(spec.pipeline_name))
+
+    args.worker_out.parent.mkdir(parents=True, exist_ok=True)
+    args.worker_out.write_text(json.dumps(entry, indent=2, sort_keys=True), encoding="utf-8")
+    return 0
+
+
+def cost_profile_command(args: argparse.Namespace) -> int:
+    """Measure each pipeline's training and inference cost in a FRESH PROCESS.
+
+    Isolation is the whole point. In the 97-cell run all four pipelines share one interpreter
+    and keep their backbones cached between cells, so a pipeline's peak memory includes whatever
+    its predecessors left allocated -- `folador_hog` reports over a gigabyte of CUDA memory while
+    running entirely on CPU. Here each pipeline gets its own interpreter, so `host_rss_peak_mb`
+    (a process-lifetime high-water mark) and `gpu_peak_reserved_mb` (what the caching allocator
+    took from the card) finally describe one pipeline instead of a shared process.
+    """
+    if args.worker_cell:
+        return _cost_profile_worker(args)
+
+    if not args.manifest.is_file():
+        raise SystemExit(f"manifest not found: {args.manifest}")
+
+    specs = cost_profile_specs()
+    args.work_dir.mkdir(parents=True, exist_ok=True)
+
+    entries: list[dict] = []
+    for index, spec in enumerate(specs, start=1):
+        fragment = args.work_dir / f"{spec.pipeline_name}.json"
+        print(
+            f"[{index}/{len(specs)}] {spec.pipeline_name} ({spec.recipe_name}) "
+            f"{spec.train_source}->{spec.test_source} in a fresh process...",
+            flush=True,
+        )
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "cost-profile",
+                "--manifest",
+                str(args.manifest),
+                "--work-dir",
+                str(args.work_dir),
+                "--worker-cell",
+                spec.cell_id,
+                "--worker-out",
+                str(fragment),
+            ],
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise SystemExit(f"cost profile for {spec.pipeline_name} failed (rc={completed.returncode})")
+        entries.append(json.loads(fragment.read_text(encoding="utf-8")))
+
+    comparison = None
+    if args.compare:
+        comparison = compare_cost_profile_predictions(entries, args.compare, args.work_dir)
+
+    repo = Path(__file__).resolve().parents[1]
+    profile = {
+        "schema": 1,
+        "isolation": "one fresh interpreter per pipeline",
+        "config": {
+            "train_source": COST_PROFILE_TRAIN,
+            "test_source": COST_PROFILE_TEST,
+            "split_source": COST_PROFILE_SPLIT,
+            "note": "each pipeline in its native recipe; every cell is a real catalog cell",
+        },
+        "git_commit": _git_value(repo.parent, "rev-parse", "HEAD"),
+        "manifest_sha256": _sha256(args.manifest),
+        "pipelines": entries,
+        "comparison_vs_results": comparison,
+    }
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    args.out.write_text(json.dumps(profile, indent=2, sort_keys=True), encoding="utf-8")
+
+    header = (
+        f"{'pipeline':14s} {'device':7s} {'fit s':>9s} {'GPU dMB':>9s} "
+        f"{'GPU resMB':>10s} {'RSS MB':>9s} {'ms/img':>8s} {'params':>7s}"
+    )
+    print("\n" + header)
+    print("-" * len(header))
+    for entry in entries:
+        device = str(entry["accelerator_device"] or "cpu")
+        print(
+            f"{entry['pipeline_name']:14s} {device:7s} "
+            f"{entry['fit_seconds'] or 0.0:9.1f} {entry['gpu_peak_delta_mb'] or 0.0:9.1f} "
+            f"{entry['gpu_peak_reserved_mb'] or 0.0:10.1f} {entry['host_rss_peak_mb'] or 0.0:9.1f} "
+            f"{entry['infer_latency_ms_per_img'] or 0.0:8.2f} {entry['n_free_hyperparameters']:7d}"
+        )
+    if comparison:
+        print("\nvs the completed run (same cells, full process context):")
+        for record in comparison:
+            if not record.get("compared"):
+                print(f"  {record['pipeline_name']:14s} not compared ({record.get('reason')})")
+                continue
+            verdict = "identical" if record["identical_predictions"] else "DIFFERS"
+            print(f"  {record['pipeline_name']:14s} {verdict}  max |proba delta| = {record['max_abs_proba_delta']:.3e}")
+    print(f"\nwrote {args.out}")
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     repo = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
@@ -998,6 +1346,50 @@ def _build_parser() -> argparse.ArgumentParser:
     fingerprint.add_argument("--manifest", type=Path, default=repo / "results" / "manifest.parquet")
     fingerprint.add_argument("--out", type=Path, default=repo / "evidence")
     fingerprint.set_defaults(func=dataset_fingerprint_command)
+
+    export_emb = sub.add_parser(
+        "export-embeddings",
+        help="export frozen DINOv2 CLS embeddings for every manifest image",
+    )
+    export_emb.add_argument("--manifest", type=Path, default=repo / "results" / "manifest.parquet")
+    export_emb.add_argument("--out", type=Path, default=repo / "results" / "embeddings.parquet")
+    export_emb.add_argument(
+        "--task-filter",
+        default="spiral",
+        choices=["spiral", "wave", "both"],
+        help="which drawing type to embed (default: spiral, the benchmark's task)",
+    )
+    export_emb.add_argument(
+        "--recipe",
+        default="AUG-None",
+        choices=["AUG-None", "AUG-Huang", "AUG-Dogan"],
+        help="preprocessing recipe; AUG-None is the deterministic resize+normalize the probe uses",
+    )
+    export_emb.add_argument("--vit-size", default="vitb14", choices=["vits14", "vitb14", "vitl14", "vitg14"])
+    export_emb.add_argument("--batch-size", type=int, default=32)
+    export_emb.set_defaults(func=export_embeddings_command)
+
+    cost = sub.add_parser(
+        "cost-profile",
+        help="measure per-pipeline training/inference cost, each pipeline in a fresh process",
+    )
+    cost.add_argument("--manifest", type=Path, default=repo / "results" / "manifest.parquet")
+    cost.add_argument("--out", type=Path, default=repo / "results" / "cost_profile.json")
+    cost.add_argument(
+        "--work-dir",
+        type=Path,
+        default=repo / "results" / "cost_profile_work",
+        help="scratch directory for the per-pipeline runs; kept, so the fits stay inspectable",
+    )
+    cost.add_argument(
+        "--compare",
+        type=Path,
+        default=None,
+        help="results directory of a completed run; compares the profiled cells against it",
+    )
+    cost.add_argument("--worker-cell", default=None, help=argparse.SUPPRESS)
+    cost.add_argument("--worker-out", type=Path, default=None, help=argparse.SUPPRESS)
+    cost.set_defaults(func=cost_profile_command)
 
     verify_fp = sub.add_parser(
         "verify-fingerprint",

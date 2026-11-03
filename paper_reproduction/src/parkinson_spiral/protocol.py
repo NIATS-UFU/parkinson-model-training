@@ -84,6 +84,12 @@ class Pipeline(ABC):
     METHODS_SECTION_NOTES: ClassVar[str]
     MODEL_WEIGHT_IDENTIFIERS: ClassVar[dict[str, str]] = {}
 
+    # Set by `fit` when it reused an already-fitted model instead of training one.
+    # A pipeline that always trains leaves this False. The harness records it so a
+    # cost table can select real fits: a reused fit costs milliseconds and would
+    # otherwise be indistinguishable from a fast one.
+    fit_was_cached: bool = False
+
     @abstractmethod
     def fit(self, dataset, *, seed: int) -> None:
         """Train the model on `dataset` (a PreprocessedSpiralDataset)."""
