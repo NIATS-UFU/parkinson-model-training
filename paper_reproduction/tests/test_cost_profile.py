@@ -138,3 +138,34 @@ def test_a_missing_reference_run_is_reported_as_not_compared(paper, tmp_path) ->
 
     assert result[0]["compared"] is False
     assert "identical_predictions" not in result[0]
+
+
+def test_different_test_images_are_summarised_without_a_delta(paper) -> None:
+    """With different test images there is no delta to print, and that must not crash the summary."""
+    record = {
+        "cell_id": "abc123",
+        "pipeline_name": "dinov2_probe",
+        "compared": True,
+        "same_test_images": False,
+        "max_abs_proba_delta": None,
+        "identical_predictions": False,
+    }
+
+    line = paper.format_comparison_line(record)
+
+    assert "DIFFERS" in line
+    assert "test images are not the completed run's" in line
+
+
+def test_a_compared_cell_is_summarised_with_its_delta(paper) -> None:
+    """The usual case prints the verdict and the largest probability difference."""
+    record = {
+        "cell_id": "abc123",
+        "pipeline_name": "dinov2_probe",
+        "compared": True,
+        "same_test_images": True,
+        "max_abs_proba_delta": 0.0,
+        "identical_predictions": True,
+    }
+
+    assert paper.format_comparison_line(record) == "  dinov2_probe   identical  max |proba delta| = 0.000e+00"

@@ -23,6 +23,7 @@ import platform
 import shutil
 import subprocess
 import sys
+from collections.abc import Mapping
 from dataclasses import asdict
 from pathlib import Path
 
@@ -513,11 +514,13 @@ def regenerate_command(args: argparse.Namespace) -> int:
         table_cross_dataset(cells, preds),
         table_h4_cost(cells, preds),
     ])
-    (out / "results_tables.md").write_text(tables, encoding="utf-8")
+    (out / "results_tables.md").write_text(tables, encoding="utf-8", newline="\n")
     (out / "figures" / "tikz" / "fig1_crossdataset_matrices.tex").write_text(
-        fig1_matrices(cells, preds), encoding="utf-8"
+        fig1_matrices(cells, preds), encoding="utf-8", newline="\n"
     )
-    (out / "figures" / "tikz" / "fig2_asymmetry.tex").write_text(fig2_asymmetry(cells, preds), encoding="utf-8")
+    (out / "figures" / "tikz" / "fig2_asymmetry.tex").write_text(
+        fig2_asymmetry(cells, preds), encoding="utf-8", newline="\n"
+    )
 
     print(f"wrote {out / 'results_tables.md'}")
     print(f"wrote {out / 'figures' / 'tikz' / 'fig1_crossdataset_matrices.tex'}")
@@ -594,6 +597,22 @@ def _display_path(path: Path, repo: Path) -> str:
         return str(path.resolve())
 
 
+def _checksum_name(path: Path, out: Path, results: Path, repo: Path) -> str:
+    """Name a file in `checksums.sha256` so the list holds wherever the folders sit.
+
+    Evidence files are named relative to the evidence folder, result files as
+    `results/<path>`, repository files relative to its root, and anything else
+    by its absolute path, always with `/`. The evidence and results folders are
+    often written outside the repository, and an absolute path would record the
+    producing machine's layout instead.
+    """
+    resolved = path.resolve()
+    for root, prefix in ((out, Path()), (results, Path("results")), (repo, Path())):
+        if resolved.is_relative_to(root.resolve()):
+            return (prefix / resolved.relative_to(root.resolve())).as_posix()
+    return resolved.as_posix()
+
+
 def _git_value(repo: Path, *args: str) -> str | None:
     completed = subprocess.run(
         ["git", *args],
@@ -618,8 +637,8 @@ def _command_output(*args: str) -> str | None:
     return completed.stdout.strip() if completed.returncode == 0 else None
 
 
-def _hardware_profile() -> dict[str, str]:
-    raw = _command_output("system_profiler", "SPHardwareDataType")
+def _macos_hardware_profile(raw: str | None) -> dict[str, str]:
+    """Machine fields from `system_profiler SPHardwareDataType` output."""
     if raw is None:
         return {}
     allowed = {"Model Name", "Model Identifier", "Chip", "Total Number of Cores", "Memory"}
@@ -631,6 +650,65 @@ def _hardware_profile() -> dict[str, str]:
         if key in allowed:
             profile[key] = value
     return profile
+
+
+def _linux_hardware_profile(cpuinfo: str, meminfo: str) -> dict[str, str]:
+    """Machine fields from the text of `/proc/cpuinfo` and `/proc/meminfo`."""
+
+    def first(text: str, key: str) -> str | None:
+        for line in text.splitlines():
+            name, _, value = line.partition(":")
+            if name.strip() == key:
+                return value.strip()
+        return None
+
+    # The CPU model number is recorded because exact Dogan results depend on the
+    # CPU model as well as the processor count (see docs/REPRODUCE.md).
+    fields = {
+        "CPU": first(cpuinfo, "model name"),
+        "CPU model number": first(cpuinfo, "model"),
+        "Logical processors": str(sum(line.startswith("processor") for line in cpuinfo.splitlines())),
+        "Memory": first(meminfo, "MemTotal"),
+    }
+    return {key: value for key, value in fields.items() if value}
+
+
+def _hardware_profile() -> dict[str, str]:
+    if sys.platform == "darwin":
+        profile = _macos_hardware_profile(_command_output("system_profiler", "SPHardwareDataType"))
+    elif sys.platform == "linux":
+        profile = _linux_hardware_profile(
+            Path("/proc/cpuinfo").read_text(encoding="utf-8"),
+            Path("/proc/meminfo").read_text(encoding="utf-8"),
+        )
+    else:
+        profile = {}
+    gpu = _command_output("nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader")
+    if gpu:
+        profile["GPU"] = gpu
+    return profile
+
+
+def _run_device_policy(torch_device: str | None, tensorflow_devices: str | None) -> dict[str, str]:
+    """Where each pipeline runs, given the PyTorch device the pipelines select.
+
+    `torch_device` is `accelerator_device()` ("cuda", "mps" or "cpu"), or None
+    without PyTorch. Huang trains in mixed precision on CUDA only; Dogan's
+    PyTorch backbones are frozen in the paper catalog, so they only extract
+    features and never use mixed precision there.
+    """
+    torch_label = {"cuda": "PyTorch CUDA", "mps": "PyTorch MPS", "cpu": "PyTorch CPU"}.get(
+        torch_device or "", "PyTorch unavailable"
+    )
+    precision = "mixed precision" if torch_device == "cuda" else "full precision"
+    tensorflow_gpu = tensorflow_devices is not None and "device_type='GPU'" in tensorflow_devices
+    return {
+        "dinov2_probe": torch_label,
+        "huang_vgg19": f"{torch_label}, {precision}",
+        "dogan_triple_torch": torch_label,
+        "dogan_triple_nasnetmobile": "TensorFlow GPU" if tensorflow_gpu else "TensorFlow CPU",
+        "folador_hog": "CPU",
+    }
 
 
 def freeze_evidence_command(args: argparse.Namespace) -> int:
@@ -647,7 +725,7 @@ def freeze_evidence_command(args: argparse.Namespace) -> int:
     conflicting = subject_folds.groupby(["dataset", "subject_id"]).size()
     if (conflicting > 1).any():
         raise ValueError("manifest assigns conflicting labels or CV folds to at least one subject")
-    subject_folds.to_csv(args.out / "subject_folds.csv", index=False)
+    subject_folds.to_csv(args.out / "subject_folds.csv", index=False, lineterminator="\n")
     if args.historical_manifest.is_file():
         historical = pd.read_parquet(args.historical_manifest)
         historical["dataset"] = historical["dataset"].replace({"niats": "folador"})
@@ -665,7 +743,7 @@ def freeze_evidence_command(args: argparse.Namespace) -> int:
             .drop_duplicates()
             .sort_values(["dataset", "subject_id"])
         )
-        historical_folds.to_csv(args.out / "historical_subject_folds.csv", index=False)
+        historical_folds.to_csv(args.out / "historical_subject_folds.csv", index=False, lineterminator="\n")
         comparison = historical_folds.merge(
             subject_folds,
             on=["dataset", "subject_id", "class_label"],
@@ -689,10 +767,13 @@ def freeze_evidence_command(args: argparse.Namespace) -> int:
         (args.out / "fold_comparison.json").write_text(
             json.dumps(fold_comparison, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
+            newline="\n",
         )
 
     catalog = [{"cell_id": spec.cell_id, **asdict(spec)} for spec in all_cells()]
-    (args.out / "catalog.json").write_text(json.dumps(catalog, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    (args.out / "catalog.json").write_text(
+        json.dumps(catalog, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n"
+    )
     model_configurations = {
         name: {
             "free_hyperparameters": get_pipeline_class(name).FREE_HYPERPARAMETERS,
@@ -703,6 +784,7 @@ def freeze_evidence_command(args: argparse.Namespace) -> int:
     (args.out / "model_configurations.json").write_text(
         json.dumps(model_configurations, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
+        newline="\n",
     )
 
     packages = {}
@@ -723,10 +805,22 @@ def freeze_evidence_command(args: argparse.Namespace) -> int:
         except importlib.metadata.PackageNotFoundError:
             packages[name] = None
 
+    tensorflow_devices = (
+        _command_output(
+            str(Path(sys.executable)),
+            "-c",
+            "import tensorflow as tf; print(tf.config.list_physical_devices())",
+        )
+        if packages["tensorflow"] is not None
+        else None
+    )
+    torch_device = None
     accelerator: dict[str, bool | str | None] = {"torch_available": packages["torch"] is not None}
     if packages["torch"] is not None:
         import torch
+        from parkinson_spiral.pipelines import accelerator_device
 
+        torch_device = accelerator_device()
         accelerator.update({
             "cuda_available": torch.cuda.is_available(),
             "mps_available": torch.backends.mps.is_available(),
@@ -746,24 +840,13 @@ def freeze_evidence_command(args: argparse.Namespace) -> int:
         "manifest_sha256": _sha256(args.manifest),
         "catalog_cells": len(catalog),
         "hardware_profile": _hardware_profile(),
-        "run_device_policy": {
-            "dinov2_probe": "PyTorch MPS",
-            "huang_vgg19": "PyTorch MPS, full precision",
-            "dogan_triple_torch": "PyTorch MPS",
-            "dogan_triple_nasnetmobile": "TensorFlow CPU",
-            "folador_hog": "CPU",
-        },
-        "tensorflow_devices": _command_output(
-            str(Path(sys.executable)),
-            "-c",
-            "import tensorflow as tf; print(tf.config.list_physical_devices())",
-        )
-        if packages["tensorflow"] is not None
-        else None,
+        "run_device_policy": _run_device_policy(torch_device, tensorflow_devices),
+        "tensorflow_devices": tensorflow_devices,
     }
     (args.out / "environment.json").write_text(
         json.dumps(environment, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
+        newline="\n",
     )
     repository_patch = subprocess.run(
         ["git", "diff", "--binary", "HEAD"],
@@ -772,7 +855,7 @@ def freeze_evidence_command(args: argparse.Namespace) -> int:
         capture_output=True,
         text=True,
     ).stdout
-    (args.out / "repository.patch").write_text(repository_patch, encoding="utf-8")
+    (args.out / "repository.patch").write_text(repository_patch, encoding="utf-8", newline="\n")
 
     if args.manuscript.is_file():
         shutil.copy2(args.manuscript, args.out / args.manuscript.name)
@@ -797,11 +880,11 @@ def freeze_evidence_command(args: argparse.Namespace) -> int:
         checksum_paths.extend(sorted(path for path in args.results.rglob("*") if path.is_file()))
     unique_checksum_paths = dict.fromkeys(path.resolve() for path in checksum_paths if path.is_file())
     checksum_lines = [
-        f"{_sha256(path)}  {_display_path(path, repo)}"
+        f"{_sha256(path)}  {_checksum_name(path, args.out, args.results, repo)}"
         for path in unique_checksum_paths
         if path != (args.out / "checksums.sha256").resolve()
     ]
-    (args.out / "checksums.sha256").write_text("\n".join(checksum_lines) + "\n", encoding="utf-8")
+    (args.out / "checksums.sha256").write_text("\n".join(checksum_lines) + "\n", encoding="utf-8", newline="\n")
 
     readme = (
         "# Frozen reproduction evidence\n\n"
@@ -813,9 +896,11 @@ def freeze_evidence_command(args: argparse.Namespace) -> int:
         "- `model_configurations.json`: declared hyperparameters and methods notes.\n"
         "- `repository.patch`: exact uncommitted code state relative to the recorded commit.\n"
         "- manuscript PDF: frozen submitted manuscript snapshot when supplied.\n"
-        "- `checksums.sha256`: hashes for lockfiles, manifest, and generated result artifacts.\n"
+        "- `checksums.sha256`: hashes for lockfiles, manifest, and generated result artifacts. Files in this\n"
+        "  folder are named relative to it, result files as `results/<path>`, and lockfiles relative to the\n"
+        "  repository root.\n"
     )
-    (args.out / "README.md").write_text(readme, encoding="utf-8")
+    (args.out / "README.md").write_text(readme, encoding="utf-8", newline="\n")
     print(f"wrote frozen evidence -> {args.out}")
     return 0
 
@@ -855,7 +940,7 @@ def dataset_fingerprint_command(args: argparse.Namespace) -> int:
 
     df = pd.DataFrame(rows).sort_values("image_id").reset_index(drop=True)
     out_csv = args.out / "dataset_fingerprint.csv"
-    df.to_csv(out_csv, index=False)
+    df.to_csv(out_csv, index=False, lineterminator="\n")
 
     fingerprint_hash = hashlib.sha256(out_csv.read_bytes()).hexdigest()
 
@@ -887,7 +972,7 @@ def dataset_fingerprint_command(args: argparse.Namespace) -> int:
         }
 
     out_summary = args.out / "dataset_fingerprint_summary.json"
-    out_summary.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    out_summary.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
 
     print(f"wrote {out_csv}  ({len(df)} rows)")
     print(f"wrote {out_summary}")
@@ -1013,44 +1098,24 @@ EMBEDDING_METADATA_COLUMNS = (
 )
 
 
-def class_label_to_int() -> dict[str, int]:
-    """The canonical class-label mapping, obtained without requiring torch.
-
-    `CLASS_LABEL_TO_INT` is defined in `parkinson_spiral.data.dataset`, which
-    imports torch at module level because it defines a `torch.utils.data.Dataset`.
-    torch lives in the `[train]` extra, so a Layer-1 install cannot import that
-    module at all, and `build_embedding_frame` is on the Layer-1 path.
-
-    The literal is duplicated here rather than moved to a torch-free module
-    because moving it would edit `src/parkinson_spiral/`, which changes
-    `_source_sha256()` and invalidates every cached cell. The duplication is
-    held in check by a test that forces this fallback and asserts it still
-    equals the canonical mapping.
-    """
-    try:
-        from parkinson_spiral.data.dataset import CLASS_LABEL_TO_INT
-    except ImportError:
-        return {"healthy": 0, "parkinson": 1}
-    return dict(CLASS_LABEL_TO_INT)
-
-
 def build_embedding_frame(
     manifest: pd.DataFrame,
     features: np.ndarray,
     labels: np.ndarray,
+    class_label_to_int: Mapping[str, int],
 ) -> pd.DataFrame:
     """Join extracted feature vectors onto their manifest rows, one row per image.
 
     Pure, so the two ways this can silently go wrong are testable without loading
     a backbone. The extractor's DataLoader runs unshuffled, so row i of `features`
     must be manifest row i; comparing the labels it emitted against the manifest's
-    own is what checks that the correspondence actually held.
+    own is what checks that the correspondence actually held. The caller passes
+    the dataset's own `CLASS_LABEL_TO_INT`, so the labels are compared against the
+    mapping that produced them.
     """
-    CLASS_LABEL_TO_INT = class_label_to_int()
-
     if len(features) != len(manifest):
         raise ValueError(f"extractor returned {len(features)} vectors for {len(manifest)} images")
-    expected = manifest["class_label"].map(CLASS_LABEL_TO_INT).to_numpy()
+    expected = manifest["class_label"].map(class_label_to_int).to_numpy()
     if not np.array_equal(labels, expected):
         raise ValueError("extracted labels do not follow the manifest order; the embeddings are unusable")
 
@@ -1071,7 +1136,7 @@ def export_embeddings_command(args: argparse.Namespace) -> int:
     identity is the point: features from a reimplementation would describe a
     different model than the paper reports.
     """
-    from parkinson_spiral.data.dataset import PreprocessedSpiralDataset
+    from parkinson_spiral.data.dataset import CLASS_LABEL_TO_INT, PreprocessedSpiralDataset
     from parkinson_spiral.pipelines.dinov2_probe import DinoV2Probe
     from parkinson_spiral.recipes import get_recipe
 
@@ -1091,7 +1156,7 @@ def export_embeddings_command(args: argparse.Namespace) -> int:
     probe = DinoV2Probe(vit_size=args.vit_size, batch_size=args.batch_size)
     print(f"extracting {len(manifest)} embeddings with dinov2_{args.vit_size} under {args.recipe}...")
     features, labels = probe._extract(dataset)  # noqa: SLF001 -- the released path is the point
-    frame = build_embedding_frame(manifest, features, labels)
+    frame = build_embedding_frame(manifest, features, labels, CLASS_LABEL_TO_INT)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     frame.to_parquet(args.out, index=False)
@@ -1109,7 +1174,7 @@ def export_embeddings_command(args: argparse.Namespace) -> int:
         "manifest_sha256": _sha256(args.manifest),
     }
     sidecar_path = args.out.with_suffix(".json")
-    sidecar_path.write_text(json.dumps(sidecar, indent=2, sort_keys=True), encoding="utf-8")
+    sidecar_path.write_text(json.dumps(sidecar, indent=2, sort_keys=True), encoding="utf-8", newline="\n")
 
     print(f"wrote {len(frame)} x {features.shape[1]}-d embeddings -> {args.out}")
     print(f"metadata -> {sidecar_path}")
@@ -1120,9 +1185,9 @@ def export_embeddings_command(args: argparse.Namespace) -> int:
 # ---- cost-profile ----
 
 # The cost profile runs one representative training configuration per pipeline: its native
-# recipe, trained on the largest dataset (Moura) and evaluated off-diagonal on Zham. Each is an
-# EXISTING catalog cell rather than a bespoke config, so the cost figures describe a run the
-# paper actually reports and the predictions can be checked against it.
+# recipe, trained on the largest dataset (Moura, key `hemato`) and evaluated off-diagonal on Zham
+# (key `kaggle`). Each is an EXISTING catalog cell rather than a bespoke config, so the cost
+# figures describe a run the paper actually reports and the predictions can be checked against it.
 COST_PROFILE_TRAIN = "hemato"
 COST_PROFILE_TEST = "kaggle"
 COST_PROFILE_SPLIT = "cross-dataset"
@@ -1234,6 +1299,17 @@ def compare_cost_profile_predictions(entries: list[dict], results_dir: Path, wor
     return comparison
 
 
+def format_comparison_line(record: dict) -> str:
+    """One summary line for a profiled cell compared against the completed run."""
+    name = f"{record['pipeline_name']:14s}"
+    if not record.get("compared"):
+        return f"  {name} not compared ({record.get('reason')})"
+    if not record["same_test_images"]:
+        return f"  {name} DIFFERS  the test images are not the completed run's"
+    verdict = "identical" if record["identical_predictions"] else "DIFFERS"
+    return f"  {name} {verdict}  max |proba delta| = {record['max_abs_proba_delta']:.3e}"
+
+
 def _cost_profile_worker(args: argparse.Namespace) -> int:
     """Profile exactly one pipeline. Runs as a child process so the measurement is isolated."""
     from parkinson_spiral.runner import RunPaths, run_cell
@@ -1247,7 +1323,7 @@ def _cost_profile_worker(args: argparse.Namespace) -> int:
     entry = build_cost_profile_entry(row, get_pipeline_class(spec.pipeline_name))
 
     args.worker_out.parent.mkdir(parents=True, exist_ok=True)
-    args.worker_out.write_text(json.dumps(entry, indent=2, sort_keys=True), encoding="utf-8")
+    args.worker_out.write_text(json.dumps(entry, indent=2, sort_keys=True), encoding="utf-8", newline="\n")
     return 0
 
 
@@ -1268,6 +1344,7 @@ def cost_profile_command(args: argparse.Namespace) -> int:
         raise SystemExit(f"manifest not found: {args.manifest}")
 
     specs = cost_profile_specs()
+    _require_cuda(specs)
     args.work_dir.mkdir(parents=True, exist_ok=True)
 
     entries: list[dict] = []
@@ -1318,7 +1395,7 @@ def cost_profile_command(args: argparse.Namespace) -> int:
         "comparison_vs_results": comparison,
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(json.dumps(profile, indent=2, sort_keys=True), encoding="utf-8")
+    args.out.write_text(json.dumps(profile, indent=2, sort_keys=True), encoding="utf-8", newline="\n")
 
     header = (
         f"{'pipeline':14s} {'device':7s} {'fit s':>9s} {'GPU dMB':>9s} "
@@ -1337,11 +1414,7 @@ def cost_profile_command(args: argparse.Namespace) -> int:
     if comparison:
         print("\nvs the completed run (same cells, full process context):")
         for record in comparison:
-            if not record.get("compared"):
-                print(f"  {record['pipeline_name']:14s} not compared ({record.get('reason')})")
-                continue
-            verdict = "identical" if record["identical_predictions"] else "DIFFERS"
-            print(f"  {record['pipeline_name']:14s} {verdict}  max |proba delta| = {record['max_abs_proba_delta']:.3e}")
+            print(format_comparison_line(record))
     print(f"\nwrote {args.out}")
     return 0
 
@@ -1481,7 +1554,7 @@ def save_released_model(spec: CellSpec, pipeline, models_dir: Path) -> Path:
         "source_sha256": _source_sha256(),
         "packages": {**_package_versions(), "skops": importlib.metadata.version("skops")},
     }
-    (directory / MODEL_CARD).write_text(json.dumps(card, indent=2, sort_keys=True), encoding="utf-8")
+    (directory / MODEL_CARD).write_text(json.dumps(card, indent=2, sort_keys=True), encoding="utf-8", newline="\n")
     return directory
 
 
@@ -1603,7 +1676,7 @@ def verify_models_command(args: argparse.Namespace) -> int:
         "all_same_subject_metrics": all(record["same_subject_metrics"] for record in records),
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+    args.out.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8", newline="\n")
     print(f"\n{sum(r['same_subject_metrics'] for r in records)}/{len(records)} cells reproduce; wrote {args.out}")
     return 0 if report["all_same_subject_metrics"] else 1
 
@@ -1622,9 +1695,9 @@ def statistics_command(args: argparse.Namespace) -> int:
     baselines = evaluation.baselines(args.results)
 
     args.out.mkdir(parents=True, exist_ok=True)
-    intervals.to_csv(args.out / "intervals.csv", index=False)
-    paired.to_csv(args.out / "paired.csv", index=False)
-    baselines.to_csv(args.out / "baselines.csv", index=False)
+    intervals.to_csv(args.out / "intervals.csv", index=False, lineterminator="\n")
+    paired.to_csv(args.out / "paired.csv", index=False, lineterminator="\n")
+    baselines.to_csv(args.out / "baselines.csv", index=False, lineterminator="\n")
     summary = {
         "schema": 1,
         "cells_sha256": _sha256(args.results / "cells.parquet"),
@@ -1635,7 +1708,9 @@ def statistics_command(args: argparse.Namespace) -> int:
         "n_rejections_after_holm": int(paired.rejects_after_holm.sum()),
         "n_holm_intervals_excluding_zero": int(paired.holm_interval_excludes_zero.sum()),
     }
-    (args.out / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+    (args.out / "summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8", newline="\n"
+    )
 
     print(f"{summary['n_cells']} cells with intervals; {summary['one_class_resamples']} one-class resamples")
     print(
@@ -1660,8 +1735,8 @@ def distances_command(args: argparse.Namespace) -> int:
     coordinates = distances.tsne_coordinates(embeddings)
 
     args.out.mkdir(parents=True, exist_ok=True)
-    table.to_csv(args.out / "distances.csv", index=False)
-    coordinates.to_csv(args.out / "tsne.csv", index=False)
+    table.to_csv(args.out / "distances.csv", index=False, lineterminator="\n")
+    coordinates.to_csv(args.out / "tsne.csv", index=False, lineterminator="\n")
     if args.figure:
         plot_tsne(coordinates, args.out / "fig_tsne.png")
 
