@@ -45,6 +45,47 @@ thing interactively after local results exist. Every number is computed from the
 prediction parquet files by `src/parkinson_spiral/analysis.py` — nothing is hard-coded
 except the published-literature reference values, which are clearly labelled.
 
+### Statistics and dataset distances
+
+```bash
+python scripts/paper.py statistics --results results --out results/statistics
+python scripts/paper.py distances --embeddings results/embeddings.parquet --out results/distances --figure
+```
+
+`statistics` (`src/parkinson_spiral/evaluation.py`) reads the same result directory
+and writes, all at the participant level:
+
+- `intervals.csv`: accuracy, sensitivity, specificity and ROC-AUC with a 95%
+  percentile bootstrap over participants (1,000 resamples from the run's seed, one
+  shared resample set per cell), for the 12 diagonals (five folds pooled) and the 24
+  off-diagonal cells. `n_one_class_resamples` counts resamples holding one class;
+  any count above zero makes that cell's sensitivity, specificity or AUC interval
+  unreliable.
+- `paired.csv`: each pipeline against DINOv2 on every off-diagonal cell, with an exact
+  McNemar test, Holm's correction across the six comparisons of a test set, and the
+  Quesenberry-Hurst interval for the difference in error rates, unadjusted and at the
+  Holm level (Berrar and Lozano 2013).
+- `baselines.csv`: each test set's majority-class accuracy.
+
+`distances` (`src/parkinson_spiral/distances.py`) needs the frozen DINOv2 embedding
+of every spiral, which `export-embeddings` writes. That step reads the images, so it
+needs the datasets and the `train` extra:
+
+```bash
+python scripts/paper.py export-embeddings --manifest results/manifest.parquet --out results/embeddings.parquet
+```
+
+It writes `distances.csv`: the sliced Wasserstein-2 distance between each pair of
+datasets, each participant being the mean embedding of their spirals. Each distance
+is the square root of the mean squared distance over 200 draws of 14 participants
+per dataset, with 1,000 projection directions. Each pair is set against two references: the floor, which is the same
+measure between disjoint halves of one dataset, and a null, in which participants
+are shuffled across datasets. The estimate does not settle at these sample sizes,
+so read the distances as an ordering of the pairs, not as magnitudes. It also
+writes `tsne.csv`, the 2-D t-SNE map of the spiral embeddings. With `--figure` it
+draws that map to `fig_tsne.png`, which needs the `figures` extra
+(`pip install -e ".[figures]"`).
+
 ---
 
 ## Layer 2 — re-train from scratch (needs data; some pipelines need a GPU)

@@ -5,6 +5,8 @@ Usage:
     python scripts/paper.py reproduce --manifest results/manifest.parquet --out results
     python scripts/paper.py reproduce --manifest results/manifest.parquet --out results --save-models models
     python scripts/paper.py verify-models --models models --manifest results/manifest.parquet --results results
+    python scripts/paper.py statistics --results results --out results/statistics
+    python scripts/paper.py distances --embeddings results/embeddings.parquet --out results/distances --figure
     python scripts/paper.py regenerate --results results --out paper_artifacts
     python scripts/paper.py verify-catalog --results results
     python scripts/paper.py export-embeddings --manifest results/manifest.parquet \
@@ -1606,6 +1608,140 @@ def verify_models_command(args: argparse.Namespace) -> int:
     return 0 if report["all_same_subject_metrics"] else 1
 
 
+# ---- statistics and distances ----
+
+
+def statistics_command(args: argparse.Namespace) -> int:
+    """Participant-level intervals, paired comparisons and majority baselines of a completed run."""
+    from parkinson_spiral import evaluation
+
+    if not (args.results / "cells.parquet").is_file():
+        raise SystemExit(f"{args.results / 'cells.parquet'} not found")
+    intervals = evaluation.intervals(args.results)
+    paired = evaluation.paired(args.results)
+    baselines = evaluation.baselines(args.results)
+
+    args.out.mkdir(parents=True, exist_ok=True)
+    intervals.to_csv(args.out / "intervals.csv", index=False)
+    paired.to_csv(args.out / "paired.csv", index=False)
+    baselines.to_csv(args.out / "baselines.csv", index=False)
+    summary = {
+        "schema": 1,
+        "cells_sha256": _sha256(args.results / "cells.parquet"),
+        "n_cells": len(intervals),
+        "one_class_resamples": int(intervals.n_one_class_resamples.sum()),
+        "points_equal_reported_metrics": bool(intervals.points_equal_binary_metrics.all()),
+        "n_comparisons": len(paired),
+        "n_rejections_after_holm": int(paired.rejects_after_holm.sum()),
+        "n_holm_intervals_excluding_zero": int(paired.holm_interval_excludes_zero.sum()),
+    }
+    (args.out / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+
+    print(f"{summary['n_cells']} cells with intervals; {summary['one_class_resamples']} one-class resamples")
+    print(
+        f"{summary['n_comparisons']} paired comparisons against {evaluation.REFERENCE}: "
+        f"{summary['n_rejections_after_holm']} reject after Holm, "
+        f"{summary['n_holm_intervals_excluding_zero']} adjusted intervals exclude zero"
+    )
+    print(f"wrote {args.out}")
+    return 0
+
+
+def distances_command(args: argparse.Namespace) -> int:
+    """Sliced Wasserstein distances between the datasets, with floor and null, plus the t-SNE map."""
+    from parkinson_spiral import distances
+
+    if not args.embeddings.is_file():
+        raise SystemExit(f"embeddings not found: {args.embeddings} (write them with export-embeddings)")
+    if args.figure:
+        importlib.import_module("matplotlib")  # fail before the slow steps, not after
+    embeddings = pd.read_parquet(args.embeddings)
+    table = distances.dataset_distances(distances.participant_clouds(embeddings))
+    coordinates = distances.tsne_coordinates(embeddings)
+
+    args.out.mkdir(parents=True, exist_ok=True)
+    table.to_csv(args.out / "distances.csv", index=False)
+    coordinates.to_csv(args.out / "tsne.csv", index=False)
+    if args.figure:
+        plot_tsne(coordinates, args.out / "fig_tsne.png")
+
+    between = table[table.kind == "between"]
+    for row in between.itertuples():
+        print(
+            f"  {PAPER_NAMES[row.a]:7s} vs {PAPER_NAMES[row.b]:7s} distance {row.distance:.3f}  "
+            f"above floor: {row.exceeds_floor_p95}  above null: {row.exceeds_null_p95}"
+        )
+    print(f"wrote {args.out}")
+    return 0
+
+
+PAPER_NAMES = {"kaggle": "Zham", "folador": "Folador", "hemato": "Moura"}
+
+
+def plot_tsne(coordinates: pd.DataFrame, out: Path) -> None:
+    """The t-SNE figure: colour by dataset, marker by class. Needs the figures extra (matplotlib)."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
+
+    color = {"hemato": "#2a78d6", "folador": "#eb6834", "kaggle": "#1baf7a"}
+    surface, ink, ink_2, muted, baseline = "#fcfcfb", "#0b0b0b", "#52514e", "#898781", "#c3c2b7"
+    marker = {"healthy": "o", "parkinson": "^"}
+    # Zham and Folador overlap, so their labels are pulled apart; Moura sits apart already.
+    label_offset = {"hemato": (0, 0), "folador": (28, 26), "kaggle": (-26, -26)}
+    order = ["kaggle", "folador", "hemato"]
+
+    fig, ax = plt.subplots(figsize=(3.5, 3.1), facecolor=surface)
+    ax.set_facecolor(surface)
+    for dataset in order[::-1]:  # the large set first, so the small ones stay visible
+        for label, shape in marker.items():
+            m = (coordinates.dataset == dataset) & (coordinates.class_label == label)
+            ax.scatter(
+                coordinates.x[m], coordinates.y[m], s=8, marker=shape, c=color[dataset], alpha=0.45, linewidths=0
+            )
+        m = coordinates.dataset == dataset
+        centre = (float(np.median(coordinates.x[m])), float(np.median(coordinates.y[m])))
+        dx, dy = label_offset[dataset]
+        ax.annotate(
+            PAPER_NAMES[dataset],
+            centre,
+            textcoords="offset points",
+            xytext=(dx, dy),
+            color=ink,
+            fontsize=9,
+            fontweight="bold",
+            ha="center",
+            va="center",
+            bbox={"boxstyle": "round,pad=0.2", "fc": surface, "ec": color[dataset], "alpha": 0.9},
+            arrowprops={"arrowstyle": "-", "color": color[dataset], "lw": 0.8} if (dx or dy) else None,
+        )
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    for side in ("left", "bottom"):
+        ax.spines[side].set_color(baseline)
+    ax.tick_params(colors=muted, labelsize=7)
+    ax.set_xlabel("t-SNE 1", color=ink_2, fontsize=8)
+    ax.set_ylabel("t-SNE 2", color=ink_2, fontsize=8)
+    handles = [
+        Line2D([], [], marker="s", ls="", color=color[d], label=PAPER_NAMES[d], markersize=6) for d in order[::-1]
+    ] + [Line2D([], [], marker=marker[c], ls="", color=ink_2, label=c, markersize=6) for c in ("healthy", "parkinson")]
+    ax.legend(
+        handles=handles,
+        loc="best",
+        ncol=2,
+        frameon=False,
+        fontsize=6.5,
+        labelcolor=ink_2,
+        handletextpad=0.3,
+        columnspacing=0.8,
+    )
+    fig.tight_layout(pad=0.4)
+    fig.savefig(out, dpi=300, facecolor=surface, bbox_inches="tight")
+    plt.close(fig)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     repo = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
@@ -1642,6 +1778,23 @@ def _build_parser() -> argparse.ArgumentParser:
     verify_models.add_argument("--results", type=Path, default=repo / "results", help="results of that run")
     verify_models.add_argument("--out", type=Path, default=repo / "results" / "verify_models.json")
     verify_models.set_defaults(func=verify_models_command)
+
+    statistics = sub.add_parser(
+        "statistics",
+        help="participant-level bootstrap intervals, paired McNemar comparisons and majority baselines",
+    )
+    statistics.add_argument("--results", type=Path, default=repo / "results")
+    statistics.add_argument("--out", type=Path, default=repo / "results" / "statistics")
+    statistics.set_defaults(func=statistics_command)
+
+    dist = sub.add_parser(
+        "distances",
+        help="sliced Wasserstein distances between the datasets in DINOv2 space, and the t-SNE map",
+    )
+    dist.add_argument("--embeddings", type=Path, default=repo / "results" / "embeddings.parquet")
+    dist.add_argument("--out", type=Path, default=repo / "results" / "distances")
+    dist.add_argument("--figure", action="store_true", help="also draw fig_tsne.png (needs the figures extra)")
+    dist.set_defaults(func=distances_command)
 
     regenerate = sub.add_parser("regenerate", help="regenerate paper tables and figures from local results")
     regenerate.add_argument("--results", type=Path, default=repo / "results")

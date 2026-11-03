@@ -23,6 +23,7 @@ dependencies = [
     "pillow==12.2.0",
     "tabulate==0.10.0",        # pandas.DataFrame.to_markdown
     "threadpoolctl==3.6.0",    # fixed NCA thread count in dogan_triple; already pulled in by scikit-learn
+    "scipy==1.17.1",           # exact McNemar and chi-squared quantiles in evaluation; already pulled in by scikit-learn
 ]
 
 [project.optional-dependencies]
@@ -38,6 +39,10 @@ train = [
 hf = [
     "skops==0.13.0",
     "huggingface_hub==1.2.3",
+]
+# Drawing the t-SNE figure (`paper.py distances --figure`). Install: pip install -e ".[figures]"
+figures = [
+    "matplotlib==3.10.9",
 ]
 
 [dependency-groups]
