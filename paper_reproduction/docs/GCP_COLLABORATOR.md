@@ -84,6 +84,10 @@ gcloud compute instances create "$VM" \
   --metadata=install-nvidia-driver=True,enable-oslogin=TRUE
 ```
 
+To reproduce published `dogan_triple` cells exactly, use `--machine-type=n1-standard-8`
+and check that `lscpu` reports an Intel Broadwell CPU: Dogan's results depend on the
+core count and CPU model (see `REPRODUCE.md`). The other pipelines do not need this.
+
 Spot capacity is not guaranteed. If creation reports that no T4 is available,
 retry later rather than selecting a different region: keeping the VM in
 `europe-west3` avoids cross-region data transfer.

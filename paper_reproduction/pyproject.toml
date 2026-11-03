@@ -22,6 +22,7 @@ dependencies = [
     "scikit-image==0.26.0",
     "pillow==12.2.0",
     "tabulate==0.10.0",        # pandas.DataFrame.to_markdown
+    "threadpoolctl==3.6.0",    # fixed NCA thread count in dogan_triple; already pulled in by scikit-learn
 ]
 
 [project.optional-dependencies]
