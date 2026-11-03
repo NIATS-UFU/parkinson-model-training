@@ -252,6 +252,7 @@ def _spiral_images(folder: Path, count: int) -> list[str]:
 def test_a_saved_model_scores_a_folder_of_new_images(paper, tmp_path: Path) -> None:
     """`predict` gives each image the probability the trained pipeline gives it."""
     pytest.importorskip("skops")
+    pytest.importorskip("torch")
     from parkinson_spiral.data.dataset import PreprocessedSpiralDataset
     from parkinson_spiral.pipelines.folador_hog import FoladorHOG
     from parkinson_spiral.recipes import get_recipe
