@@ -28,8 +28,8 @@
         "3": 9,
         "4": 9
       },
-      "images": 6960,
-      "sessions": 696,
+      "images": 6972,
+      "sessions": 230,
       "subjects": 46
     },
     "kaggle": {
@@ -49,6 +49,6 @@
       "subjects": 28
     }
   },
-  "fingerprint_sha256": "7a962fb6f6a0ce51f13020eef9062b5b311bdb8b1ca8909905344f88202aa6ad",
-  "total_images": 8124
+  "fingerprint_sha256": "d6c22f26a0b408b5d1b378005a36786d41b5a9360fe14f90c9fee898855c7bf3",
+  "total_images": 8136
 }

@@ -41,12 +41,13 @@
       "T_0",
       "T_mult",
       "eta_min",
+      "gradient_max_norm",
       "rotation_degrees",
       "image_size",
       "norm_mean",
       "norm_std",
       "freezing_layers"
     ],
-    "methods_notes": "Huang et al. (2024) VGG19 recipe: ImageNet-pretrained VGG19 with the classifier head replaced by a 2-class linear layer. Trained with Adam(lr=1e-4), batch=32, 50 epochs, CrossEntropyLoss, and CosineAnnealingWarmRestarts. Huang did not specify T_0, T_mult, eta_min \u2014 we default to PyTorch defaults (T_0=10, T_mult=2, eta_min=1e-6) and document. Normalization uses Huang's published mean=0.5/std=0.5 per channel (non-standard for ImageNet-pretrained VGG19, but kept faithful for the reproduction)."
+    "methods_notes": "Huang et al. (2024) VGG19 recipe: ImageNet-pretrained VGG19 with the classifier head replaced by a 2-class linear layer. Trained with Adam(lr=1e-4), batch=32, 50 epochs, CrossEntropyLoss, and CosineAnnealingWarmRestarts. Huang did not specify T_0, T_mult, eta_min \u2014 we default to PyTorch defaults (T_0=10, T_mult=2, eta_min=1e-6) and document. Normalization uses Huang's published mean=0.5/std=0.5 per channel (non-standard for ImageNet-pretrained VGG19, but kept faithful for the reproduction). Gradients are clipped to a maximum norm of 1.0 after AMP unscaling to prevent unstable end-to-end updates. A batch whose gradient underflows to zero near convergence is skipped as a no-op rather than treated as a failure; genuine non-convergence is detected once, after training, by verifying the model still discriminates on its own training data."
   }
 }
