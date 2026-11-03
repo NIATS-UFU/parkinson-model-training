@@ -107,6 +107,41 @@ each host with the same `--shard-count` and a different `--shard-index`, then me
 the output directories. Because runs are keyed by `cell_id`, the shards cannot
 collide.
 
+### Saving and verifying the trained models
+
+`--save-models <dir>` saves the 12 models trained on all of one dataset, one per
+pipeline and training dataset: the fits behind the off-diagonal cells. Each lands in
+`<dir>/<pipeline>-<dataset>/` with a `model.json` card listing the cells it serves,
+the SHA-256 of each file, the commit and the package versions. Saving needs the `hf`
+extra (`skops`).
+
+| Pipeline | Saved files | Not saved (public, downloaded at use) |
+|---|---|---|
+| `dinov2_probe` | `probe.skops` (logistic regression) | DINOv2 ViT-B/14 |
+| `folador_hog` | `classifier.skops` (linear SVM) | none |
+| `dogan_triple` | `nca.skops`, `svm.skops` | DenseNet201, Xception, NASNetMobile |
+| `huang_vgg19` | `vgg19_state_dict.pt` (the fine-tuned network) | none |
+
+```bash
+python scripts/paper.py reproduce --manifest results/manifest.parquet --out results --save-models models
+python scripts/paper.py verify-models --models models --manifest results/manifest.parquet --results results
+```
+
+Run the full catalog in catalog order, as above, when the models must match the
+published cells. A DINOv2 cell retrained on its own in a fresh process gave image
+probabilities up to 0.023 away from the same cell inside a full catalog run; the
+cause has not been isolated. A model is saved only
+when its cell trains, so a cell served from cache saves nothing; use `--force` or an
+empty `--out`. Every file is reloaded and compared with the fitted model before its
+card is written.
+
+`verify-models` reloads each model, re-predicts the cells it serves, and compares
+them with the run that trained it. It exits non-zero if any participant-level metric
+differs, and reports the largest per-image probability difference alongside. Loading
+checks each file against its card. skops loads only scikit-learn types it trusts,
+and the network loads as tensors only, so a saved model cannot run code when it is
+loaded.
+
 ### Tuning DataLoader workers
 
 `SPIRAL_NUM_WORKERS` overrides the platform worker policy unconditionally. The
