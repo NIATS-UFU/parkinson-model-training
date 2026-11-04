@@ -128,4 +128,4 @@ list and BibTeX.
 ## License
 
 - **Code:** [`LICENSE`](LICENSE) — MIT.
-- **Trained models:** CC-BY-4.0, stated on their Zenodo record.
+- **Trained models:** CC-BY-NC-4.0 (attribution, non-commercial use only), stated on their Zenodo record.
