@@ -1,72 +1,32 @@
-[build-system]
-requires = ["hatchling>=1.24.2", "hatch-vcs>=0.3.0"]
-build-backend = "hatchling.build"
+# Repository tooling only: linting, formatting and pre-commit hooks.
+# The paper's package, its dependencies and its lockfile live in paper_reproduction/.
 
 [project]
-name = "parkinson_model_train"
-description = "Parkinson model train"
+name = "parkinson-model-training"
+version = "0"
+description = "Tooling for the repository; the paper's code is in paper_reproduction/"
 readme = {file = "README.md", content-type = "text/markdown"}
 authors = [
   {name = "Fernando Andreotti", email = "andreotti@ufu.br"},
   ]
 requires-python = ">=3.13,<3.14"
-dynamic = ["version"]
-
-dependencies = [
-    "pillow>=11",
-    "timm>=1.0",
-    "torch>=2.7",
-    "torchvision>=0.22",
-    "tqdm>=4.66",
-    "typer>=0.15.0",
-]
+dependencies = []
 
 [dependency-groups]
 dev = [
-    # Build and release
-    "build>=1",
+    # Release
     "commitizen>=4",
-    "hatch-vcs",
 
     # Linting and formatting
     "ruff>=0.8",
     "pre-commit>=4",
-
-    # Testing
-    "pytest>=8",
-    "pytest-cov>=4.1.0",
-    "pytest-pretty>=1",
 ]
 
-[tool.uv.sources]
-torch = [
-  { index = "pytorch-cu126", marker = "platform_system != 'Darwin'"},
-]
-torchvision = [
-  { index = "pytorch-cu126", marker = "platform_system != 'Darwin'"},
-]
-
-[[tool.uv.index]]
-# https://docs.astral.sh/uv/guides/integration/pytorch/#configuring-accelerators-with-environment-markers
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
-
-[[tool.uv.index]]
-name = "pytorch-cu126"
-url = "https://download.pytorch.org/whl/cu126"
-explicit = true
-
-[project.scripts]
-main-cli = "parkinson_model_train.main:main"
-
-[tool.coverage.run]
-omit = [
-  "./src/parkinson_model_train/__init__.py"
-]
+[tool.uv]
+# Nothing is built or installed from the repository root.
+package = false
 
 [tool.ruff]
-src = ["src"]
 target-version = "py313"
 line-length = 120
 fix = true
@@ -85,36 +45,9 @@ ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401", "I002"]
-"tests/*.py" = ["S101"]
-
-[tool.hatch.version]
-source = "vcs"
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/parkinson_model_train"]
-
-[tool.hatch.build.targets.wheel.sources]
-"src" = "parkinson_model_train"
-
-[tool.hatch.version.raw-options]
-version_scheme = "post-release"
-local_scheme = "node-and-date"
-git_describe_command = ["git", "describe", "--tags", "--long", "--match", "v*"]
-
-[tool.hatch.build.targets.sdist]
-exclude = [
-  "/.github",
-  "/backend",
-  "/scripts",
-]
 
 [project.urls]
-Repository = "https://github.com/NIATS-UFU/parkinson-model-train"
-
-[tool.pytest.ini_options]
-minversion = "6.0"
-testpaths = ["tests"]
-pythonpath = ["src", "."]
+Repository = "https://github.com/NIATS-UFU/parkinson-model-training"
 
 [tool.commitizen]
 name = "cz_conventional_commits"

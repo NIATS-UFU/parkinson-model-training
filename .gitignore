@@ -148,12 +148,8 @@ dmypy.json
 # vscode
 .vscode/
 
-# version control via scm
-src/parkinson_model_train/__version__.py
-
 # local datasets
 data/*
-!data/README.md
 
 # training checkpoints and runs
 runs/

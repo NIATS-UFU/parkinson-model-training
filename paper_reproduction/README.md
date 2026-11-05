@@ -40,7 +40,7 @@ pipelines across three datasets in a full train × test factorial:
 
 ## Project structure
 
-The reproduction package intentionally mirrors the main repository layout:
+The reproduction package is laid out as follows:
 
 ```text
 paper_reproduction/
