@@ -1,6 +1,6 @@
 # Reproducing the paper
 
-*"Cross-Dataset Robustness of Spiral Classifiers for Parkinson's Disease Diagnosis."*
+*"Cross-Dataset Robustness of Spiral Classifiers for Parkinson's Disease Screening."*
 
 Reproduction comes in **two layers**. Layer 1 needs a local result directory;
 Layer 2 creates one from the datasets.
@@ -250,7 +250,7 @@ they need different fixes. There is no override flag.
 The two CPU pipelines are unaffected: `--pipeline dinov2_probe --pipeline folador_hog`
 runs anywhere, and `--dry-run` lists the full catalog on any machine.
 
-CPU-only reproduction (DINOv2 + Folador HOG) covers the paper's central H2/H4 story;
+CPU-only reproduction (DINOv2 + Folador HOG) covers the paper's central H2/H3 story;
 the GPU pipelines are needed for the literature in-domain ceilings and the full 3×3
 matrices of Huang/Dogan.
 
@@ -275,8 +275,7 @@ that already succeeded.
 
 On Apple Silicon, `dinov2_probe` still uses the Metal Performance Shaders (`mps`)
 backend automatically. `huang_vgg19` and `dogan_triple` do **not** — the CUDA
-requirement above means they refuse to run on an MPS-only host, so earlier macOS
-reproductions of those two pipelines are no longer possible through this CLI.
+requirement above means they refuse to run on an MPS-only host.
 
 The notebook splits this for you: **Section 1** runs the CPU-only subset, and
 **Section 2** runs the GPU pipelines behind a `torch.cuda.is_available()` guard.
@@ -288,9 +287,8 @@ The notebook splits this for you: **Section 1** runs the CPU-only subset, and
 All reported numbers are **subject-level**, pooled across the cells that make up a
 logical result (e.g. the 5 CV folds of a diagonal), with a percentile bootstrap
 95% CI (`n_resamples=1000`, `seed=20260516`). Re-deriving them from generated
-predictions is deterministic and exact once those predictions exist locally. One
-small caveat about two GPU-trained cross-dataset AUCs is documented in
-[`PROVENANCE.md`](PROVENANCE.md).
+predictions is deterministic and exact once those predictions exist locally. How
+each number is derived is described in [`PROVENANCE.md`](PROVENANCE.md).
 
 `dogan_triple` is sensitive to the machine. Its NCA step stops at a different
 iteration when its matrix products are split across a different number of threads,

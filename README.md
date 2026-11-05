@@ -6,13 +6,15 @@
 
 Training repo for the NIATS Parkinson drawing baseline: spiral/wave crops from [`spiral-cropper`](https://github.com/NIATS-UFU/spiral-cropper) go into a frozen DINO/DINOv2 encoder, then a supervised linear classifier is trained with subject-level splits.
 
+**Looking for the paper's code?** *Cross-Dataset Robustness of Spiral Classifiers for Parkinson's
+Disease Screening* is reproduced by [`paper_reproduction/`](paper_reproduction/README.md), a
+self-contained package with its own environment, docs and licence.
+
 - **Repository:** <https://github.com/NIATS-UFU/parkinson-model-training>
 - **CLI entry point:** `main-cli`
 - **Main assumption:** split by subject, not by image, to avoid leakage.
 - **Training guide:** [`docs/training_walkthrough.md`](docs/training_walkthrough.md)
 - **Colab notebook:** [`notebooks/colab_training.ipynb`](notebooks/colab_training.ipynb)
-- **Paper reproduction:** [`paper_reproduction/`](paper_reproduction/README.md) — a self-contained
-  package that reproduces the published cross-dataset benchmark, with its own environment and docs.
 
 ### Dataset names
 
@@ -212,3 +214,10 @@ Format and lint:
 make fmt
 make lint
 ```
+
+## License
+
+- **The paper's code** (`paper_reproduction/`): MIT, in
+  [`paper_reproduction/LICENSE`](paper_reproduction/LICENSE).
+- **Trained models:** CC-BY-NC-4.0 (attribution, non-commercial use only), stated on their
+  [Zenodo record](https://doi.org/10.5281/zenodo.23748799).

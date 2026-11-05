@@ -35,7 +35,7 @@ train = [
     "tensorflow==2.21.0",     # Folador 1D-CNN + Dogan NASNetMobile (faithful reproductions)
     "tqdm==4.67.1",
 ]
-# Publishing the released model to the Hugging Face Hub. Install: pip install -e ".[hf]"
+# Saving and loading the released models (skops). Install: pip install -e ".[hf]"
 hf = [
     "skops==0.13.0",
     "huggingface_hub==1.2.3",
