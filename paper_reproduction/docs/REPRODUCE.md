@@ -201,7 +201,9 @@ loaded.
 `predict` scores new drawings with one saved model: every image directly inside a
 folder (or one image), preprocessed as in training, written as `image_id,p_parkinson`.
 The paper's participant decision is the mean over that participant's drawings,
-thresholded at 0.5.
+thresholded at 0.5. The public backbones are not stored with a model, so `predict`
+compares the ones it loaded with the checksums in the model's card and stops, writing
+nothing, if they differ.
 
 ```bash
 python scripts/paper.py predict --model models/dinov2_probe-hemato --images path/to/spirals/ --out predictions.csv

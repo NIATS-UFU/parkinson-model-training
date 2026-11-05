@@ -317,11 +317,48 @@ def test_a_saved_model_scores_a_folder_of_new_images(paper, tmp_path: Path) -> N
     np.testing.assert_allclose(predictions["p_parkinson"], expected, rtol=0, atol=1e-9)
 
 
+def test_a_backbone_that_differs_from_the_model_card_is_refused(paper) -> None:
+    """One changed weight in a public backbone stops `predict` from returning probabilities."""
+    torch = pytest.importorskip("torch")
+    from parkinson_spiral.pipelines.dinov2_probe import DinoV2Probe
+    from parkinson_spiral.weight_checksums import torch_module_sha256
+
+    backbone = torch.nn.Linear(4, 2)
+    card = {"name": "dinov2_probe-kaggle", "public_backbone_checksums": {"dinov2": torch_module_sha256(backbone)}}
+    pipeline = DinoV2Probe()
+    pipeline._model_weight_checksums = {"dinov2": torch_module_sha256(backbone)}
+    paper.check_public_backbones(pipeline, card)
+
+    with torch.no_grad():
+        backbone.weight[0, 0] += 1.0
+    pipeline._model_weight_checksums = {"dinov2": torch_module_sha256(backbone)}
+
+    with pytest.raises(ValueError, match="dinov2_probe-kaggle: the loaded dinov2 weights do not match"):
+        paper.check_public_backbones(pipeline, card)
+
+
+def test_a_backbone_missing_from_the_loaded_model_is_refused(paper) -> None:
+    pipeline, _ = _fitted_folador(paper)
+    card = {"name": "dogan_triple-kaggle", "public_backbone_checksums": {"xception": "0" * 64}}
+
+    with pytest.raises(ValueError, match="the loaded xception weights do not match"):
+        paper.check_public_backbones(pipeline, card)
+
+
 def test_scoring_a_folder_without_images_is_refused(paper, tmp_path: Path) -> None:
     (tmp_path / "notes.txt").write_text("not an image", encoding="utf-8")
 
     with pytest.raises(ValueError, match="no images"):
         paper.image_manifest(tmp_path)
+
+
+def test_a_folder_named_like_an_image_is_not_listed_as_one(paper, tmp_path: Path) -> None:
+    _spiral_images(tmp_path, 2)
+    (tmp_path / "archive.png").mkdir()
+
+    manifest = paper.image_manifest(tmp_path)
+
+    assert manifest["image_id"].tolist() == ["d0.png", "d1.png"]
 
 
 def test_scoring_a_missing_path_is_refused(paper, tmp_path: Path) -> None:

@@ -29,6 +29,7 @@ make type                  # Type-check
 make test                  # Run BOTH suites: root pytest + paper_reproduction
 make pytest                # Root suite only, with coverage
 make paper-reproduction-test  # paper_reproduction suite only, in its own env
+make paper-reproduction-test-models  # same suite with the train and hf extras, so the saved-model tests run
 make pytest-loud           # Root suite, verbose, no capture
 make check                 # fmt + lint + type + test — use before presenting work
 make run-pre-commit        # Run all pre-commit hooks over every file
