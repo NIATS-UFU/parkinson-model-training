@@ -4,50 +4,43 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-**parkinson-model-training** — training and paper-reproduction code for NIATS-UFU spiral-drawing
-Parkinson's disease classification.
+**parkinson-model-training**: the code for the NIATS-UFU paper *Cross-Dataset Robustness of Spiral
+Classifiers for Parkinson's Disease Screening*.
 
 - **Author:** Fernando Andreotti <andreotti@ufu.br>
 - **Python:** 3.13 (`requires-python = ">=3.13,<3.14"`)
 - **Repo:** https://github.com/NIATS-UFU/parkinson-model-training
 
-The repository holds two independent halves:
+All of the code is in **`paper_reproduction/`**, a self-contained package (`parkinson_spiral`) that
+reproduces the published cross-dataset benchmark. It has its own `pyproject.toml`, lockfile and test
+suite, and is installed into its own environment.
 
-- **`src/parkinson_model_train/`** — the training baseline exposed through the `main-cli` command,
-  with its own `pyproject.toml` and `uv.lock` at the repository root.
-- **`paper_reproduction/`** — a self-contained package (`parkinson_spiral`) that reproduces the
-  published cross-dataset benchmark. It has its own `pyproject.toml`, lockfile and test suite, and is
-  installed into a separate environment.
+The `pyproject.toml` and `uv.lock` at the repository root hold the development tools only (ruff,
+pre-commit, commitizen). Nothing is built or installed from the root, and the paper's dependencies
+are never added there.
 
 ## Commands
 
 ```bash
-make install               # Install deps with uv (always run first)
+make install               # Install the development tools with uv (always run first)
 make fmt                   # Format with ruff (auto-fixes in place — see the warning below)
 make lint                  # Lint with ruff
 make type                  # Type-check
-make test                  # Run BOTH suites: root pytest + paper_reproduction
-make pytest                # Root suite only, with coverage
+make test                  # Install the tools, then run the paper_reproduction suite
 make paper-reproduction-test  # paper_reproduction suite only, in its own env
-make pytest-loud           # Root suite, verbose, no capture
 make check                 # fmt + lint + type + test — use before presenting work
 make run-pre-commit        # Run all pre-commit hooks over every file
-make build                 # Build wheel to dist/
-make docker-build          # Build Docker image (requires make build first)
-make docker-run            # Build and run the image
-make docker-stop           # Stop the running container
 make clean                 # Remove the virtual environment, preserving uv.lock
 ```
 
 Run a single test:
 
 ```bash
-uv run pytest tests/test_train.py::test_name -v
+uv run --project paper_reproduction --with pytest python -m pytest paper_reproduction/tests/test_evidence.py::test_name -v
 ```
 
-The two suites live in different environments. `uv run pytest` from the repository root sees only
-`tests/` (`testpaths = ["tests"]`); the reproduction suite needs
-`uv run --project paper_reproduction --with pytest python -m pytest paper_reproduction/tests`.
+The suite runs in the `paper_reproduction` environment. The root environment has no pytest and none
+of the paper's dependencies, so `uv run pytest` from the repository root does not work.
 
 > **`make fmt` and `make check` rewrite `.py` files in place across the whole tree.** Every file under
 > `paper_reproduction/src/parkinson_spiral/` is byte-hashed into the published run signature (see
@@ -57,22 +50,6 @@ The two suites live in different environments. `uv run pytest` from the reposito
 ## Architecture
 
 ```
-src/parkinson_model_train/     # Root training package — CLI entry point `main-cli`
-  main.py                      # Typer CLI shell: argument parsing, dispatch
-  train.py                     # Training loop, checkpointing, run summary
-  evaluation.py                # Metric computation
-  reporting.py                 # SVG plot output
-  data/
-    data_models.py             # ImageRecord and friends
-    data_utils.py              # Manifest building, subject-level splitting
-    datasets/                  # Per-layout loaders: hemato, niats_folador, utils
-train_baseline.py              # Standalone cross-validation baseline script (not part of the CLI)
-tests/                         # Root suite: conftest, test_baseline, test_data,
-                               #   test_evaluation, test_train
-docs/training_walkthrough.md   # Notebook-style training guide
-notebooks/colab_training.ipynb # Colab GPU training notebook
-data/README.md                 # Expected on-disk dataset layouts
-
 paper_reproduction/            # Self-contained benchmark reproduction package
   src/parkinson_spiral/        # protocol, catalog, runner, analysis, metrics, compute, evaluation, distances,
                                #   data/ (kaggle, folador, hemato, unified, splits, dataset),
@@ -83,15 +60,16 @@ paper_reproduction/            # Self-contained benchmark reproduction package
   docs/                        # DATA, REPRODUCE, DECISIONS, PROVENANCE
   tests/                       # Reproduction suite
 
-docker/Dockerfile              # Installs pre-built wheel, entrypoint: main-cli
+pyproject.toml, uv.lock        # Development tools only (ruff, pre-commit, commitizen)
+Makefile                       # install, fmt, lint, test, check, run-pre-commit
 .github/workflows/
   on_pr.yaml                   # CI on PR: pre-commit + pytest + dev version tag
   on_merge.yaml                # CI on merge: semantic-release auto-version bump
 ```
 
-**Versioning:** Automated via `python-semantic-release` + `hatch-vcs`. Version is derived from git tags — never edit manually. Use conventional commits to control bumps: `feat:` → minor, `fix:` → patch, `feat!:` → major. A patch bump is forced on every merge if no conventional hint is found.
+**Versioning:** Automated via `python-semantic-release`. The repository's version is its git tag — never edit it manually. Use conventional commits to control bumps: `feat:` → minor, `fix:` → patch, `feat!:` → major. A patch bump is forced on every merge if no conventional hint is found.
 
-**CLI entry point:** `main-cli` (defined in `pyproject.toml` `[project.scripts]`). Add sub-commands with `typer`.
+**CLI entry point:** `paper_reproduction/scripts/paper.py`, one subcommand per task.
 
 ## Dataset naming
 
@@ -107,8 +85,7 @@ paper's name; in code, paths and commands, use the key verbatim.
 **`hemato` is a frozen identifier and must not be renamed.** It is not merely a label: it is hashed
 into `cell_id` (`protocol.py`) for 46 of the 97 benchmark cells, into every `image_id` and
 `subject_id` (`data/unified.py`), and it gates the `VALID_DATASETS` / `VALID_SOURCES` validators. It
-is also the on-disk directory name, the `main-cli create-manifest` argument, and part of the
-released model names (`<pipeline>-hemato`).
+is also the on-disk directory name and part of the released model names (`<pipeline>-hemato`).
 Renaming it would invalidate the published results and require re-running the full benchmark on
 IRB-restricted data. Refer to the cohort as *Moura* in documentation; leave the token alone.
 
@@ -157,7 +134,7 @@ exact code that produced it. Two consequences matter when editing:
 
 - Adding or removing dependencies
 - Changing the public API of existing functions
-- Renaming modules or restructuring `src/`
+- Renaming modules or restructuring the package layout
 - Modifying CI workflows
 - Bumping versions manually
 - Editing anything under `paper_reproduction/src/parkinson_spiral/` or `paper_reproduction/evidence/`

@@ -53,6 +53,12 @@ the catalog name the same 97 cells. The Folador pipeline runs its **SVM_linear**
 changed between the two: the `parkinson_spiral` package is byte-identical, so both give the code
 signature `e112a2ad3213…` that every result cell records.
 
+`evidence/checksums.sha256` lists two lockfiles as they were at that commit.
+`paper_reproduction/uv.lock` is the environment the experiments run in; compare it against the
+list. The entry named `uv.lock` is the lockfile at the repository root. That file pins the
+repository's development tools, takes no part in running the experiments and is not held fixed,
+so its hash in the tree is not expected to match the recorded one.
+
 ## Seed
 
 `DEFAULT_SEED = 20260516` is used for every split, every model fit, and every

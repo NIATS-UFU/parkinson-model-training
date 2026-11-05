@@ -5,8 +5,8 @@ rules they fix.
 
 ## Runtime
 
-- Python is standardized on **3.13** for both the root package and the paper
-  reproduction package (`>=3.13,<3.14`).
+- Python is standardized on **3.13** (`>=3.13,<3.14`), for the paper reproduction
+  package and for the repository's development tools.
 - `from __future__ import annotations` imports are intentionally absent because
   Python 3.13 is the minimum runtime.
 - The paper reproduction package caps Python at `<3.14` until the data-loading
@@ -105,8 +105,8 @@ The manifest therefore never points a pipeline at a missing image.
 
 ## Tests and CI
 
-- Root `make test` runs the root test suite and the `paper_reproduction/tests`
-  suite in the reproduction package environment.
+- Root `make test` runs the `paper_reproduction/tests` suite in the reproduction
+  package environment.
 - Reproduction tests may skip result-dependent assertions when local
   generated parquet outputs are absent.
 
