@@ -60,6 +60,7 @@ so run them only when you mean to change that package.
 
 ## License
 
-- **Code:** [`LICENSE`](LICENSE), MIT.
+- **The paper's code** (`paper_reproduction/`): MIT, in
+  [`paper_reproduction/LICENSE`](paper_reproduction/LICENSE).
 - **Trained models:** CC-BY-NC-4.0 (attribution, non-commercial use only), stated on their
   [Zenodo record](https://doi.org/10.5281/zenodo.23748799).

@@ -75,6 +75,15 @@ paper-reproduction-test:
 	uv run --project paper_reproduction --with pytest python -m pytest paper_reproduction/tests
 	@echo "✅ Paper reproduction tests completed!"
 
+## Run paper reproduction package tests with the extras the saved-model tests need
+# Those tests skip themselves when skops or torch is missing, so the import line makes a missing one fail.
+.PHONY: paper-reproduction-test-models
+paper-reproduction-test-models:
+	@echo "Running paper reproduction tests with the train and hf extras..."
+	uv run --project paper_reproduction --extra train --extra hf python -c "import skops, torch"
+	uv run --project paper_reproduction --extra train --extra hf --with pytest python -m pytest paper_reproduction/tests
+	@echo "✅ Paper reproduction tests with extras completed!"
+
 ## Format code with ruff
 .PHONY: fmt
 fmt: install
