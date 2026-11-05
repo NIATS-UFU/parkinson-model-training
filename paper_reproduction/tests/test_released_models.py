@@ -324,6 +324,15 @@ def test_scoring_a_folder_without_images_is_refused(paper, tmp_path: Path) -> No
         paper.image_manifest(tmp_path)
 
 
+def test_a_folder_named_like_an_image_is_not_listed_as_one(paper, tmp_path: Path) -> None:
+    _spiral_images(tmp_path, 2)
+    (tmp_path / "archive.png").mkdir()
+
+    manifest = paper.image_manifest(tmp_path)
+
+    assert manifest["image_id"].tolist() == ["d0.png", "d1.png"]
+
+
 def test_scoring_a_missing_path_is_refused(paper, tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="no image or folder"):
         paper.image_manifest(tmp_path / "absent")

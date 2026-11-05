@@ -1760,7 +1760,8 @@ def image_manifest(images: Path) -> pd.DataFrame:
     if images.is_file():
         paths, root = [images], images.parent
     elif images.is_dir():
-        paths, root = sorted(p for p in images.iterdir() if p.suffix.lower() in IMAGE_SUFFIXES), images
+        paths = sorted(p for p in images.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES)
+        root = images
     else:
         raise FileNotFoundError(f"no image or folder at {images}")
     if not paths:
