@@ -58,6 +58,19 @@ make test       # the paper_reproduction test suite, in its own environment
 `paper_reproduction/src/parkinson_spiral/` is hashed into the signature recorded with each result,
 so run them only when you mean to change that package.
 
+## Upgrading from a 0.x release
+
+Releases before 1.0.0 also shipped a general training package at the repository root: the Python
+package `parkinson_model_train`, the `main-cli` command, `train_baseline.py` and a Dockerfile.
+Release 1.0.0 removes them, so the repository holds the paper's code only. Nothing under
+`paper_reproduction/` changed with the removal.
+
+To keep using the training package, stay on a 0.x release, for example:
+
+```sh
+git checkout v0.5.0
+```
+
 ## License
 
 - **Code:** [`LICENSE`](LICENSE), MIT.
