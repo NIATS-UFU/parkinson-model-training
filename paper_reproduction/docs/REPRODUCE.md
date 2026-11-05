@@ -198,6 +198,17 @@ checks each file against its card. skops loads only scikit-learn types it trusts
 and the network loads as tensors only, so a saved model cannot run code when it is
 loaded.
 
+`predict` scores new drawings with one saved model: every image directly inside a
+folder (or one image), preprocessed as in training, written as `image_id,p_parkinson`.
+The paper's participant decision is the mean over that participant's drawings,
+thresholded at 0.5. The public backbones are not stored with a model, so `predict`
+compares the ones it loaded with the checksums in the model's card and stops, writing
+nothing, if they differ.
+
+```bash
+python scripts/paper.py predict --model models/dinov2_probe-hemato --images path/to/spirals/ --out predictions.csv
+```
+
 ### Tuning DataLoader workers
 
 `SPIRAL_NUM_WORKERS` overrides the platform worker policy unconditionally. The
@@ -289,8 +300,9 @@ all of it: on one CPU model with 4 and with 8 cores visible, most Dogan cells ga
 identical probabilities and a few did not. Results can also change with the CPU model or
 the BLAS build. Reproducing a published Dogan cell exactly therefore needs the machine
 that produced it: the published numbers come from 8 vCPUs of an Intel Broadwell CPU (a
-GCP `n1-standard-8` with one Tesla T4). The frozen evidence does not record the CPU, so
-check it yourself (`lscpu`, `nproc`).
+GCP `n1-standard-8` with one Tesla T4). The frozen evidence records that machine under
+`hardware_profile` in `evidence/environment.json` (`CPU`, `CPU model number`, `Logical
+processors`); compare your own with `lscpu` and `nproc`.
 
 `NCA_THREADS` is a fixed count, not the machine's. During the NCA fit and prediction it
 overrides `OPENBLAS_NUM_THREADS` and `OMP_NUM_THREADS`, and it applies to every thread

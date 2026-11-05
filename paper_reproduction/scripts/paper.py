@@ -234,6 +234,7 @@ def _model_saver(cells: list[CellSpec], models_dir: Path | None):
     names = {released_model_name(cell) for cell in cells} - {None}
     if not names:
         raise SystemExit("--save-models given, but no selected cell trains a released (off-diagonal) model")
+    check_one_model_per_name(all_cells())
     for cell in cells:
         if released_model_name(cell) is not None:
             check_model_saveable(cell)
@@ -677,10 +678,15 @@ def _hardware_profile() -> dict[str, str]:
     if sys.platform == "darwin":
         profile = _macos_hardware_profile(_command_output("system_profiler", "SPHardwareDataType"))
     elif sys.platform == "linux":
-        profile = _linux_hardware_profile(
-            Path("/proc/cpuinfo").read_text(encoding="utf-8"),
-            Path("/proc/meminfo").read_text(encoding="utf-8"),
-        )
+        # A container can restrict /proc; record no machine fields rather than abort the freeze,
+        # as on macOS when system_profiler is absent.
+        try:
+            cpuinfo = Path("/proc/cpuinfo").read_text(encoding="utf-8")
+            meminfo = Path("/proc/meminfo").read_text(encoding="utf-8")
+        except OSError:
+            profile = {}
+        else:
+            profile = _linux_hardware_profile(cpuinfo, meminfo)
     else:
         profile = {}
     gpu = _command_output("nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader")
@@ -1432,6 +1438,9 @@ MODEL_ARTIFACTS = {
     "huang_vgg19": {"vgg19_state_dict.pt": "_model"},
 }
 MODEL_CARD = "model.json"
+MODEL_CARD_SCHEMA = 2
+# Schema 1 cards load unchanged: schema 2 only adds the `weight_vector_heads` list.
+SUPPORTED_MODEL_CARD_SCHEMAS = (1, 2)
 
 
 def released_model_name(spec: CellSpec) -> str | None:
@@ -1443,6 +1452,22 @@ def released_model_name(spec: CellSpec) -> str | None:
     if spec.split_source != "cross-dataset":
         return None
     return f"{spec.pipeline_name}-{spec.train_source}"
+
+
+def check_one_model_per_name(cells: list[CellSpec]) -> None:
+    """Raise if two cells share a released model name but would train different models.
+
+    One saved model serves every off-diagonal cell trained on the same dataset, so those cells
+    must agree on everything that defines the fit; otherwise the first cell trained would win.
+    """
+    seen: dict[str, tuple] = {}
+    for cell in cells:
+        name = released_model_name(cell)
+        if name is None:
+            continue
+        settings = (cell.recipe_name, cell.pipeline_kwargs, cell.task_filter, cell.seed)
+        if seen.setdefault(name, settings) != settings:
+            raise ValueError(f"cells named {name} train different models: {seen[name]} and {settings}")
 
 
 def check_model_saveable(spec: CellSpec) -> None:
@@ -1571,7 +1596,7 @@ def save_released_model(spec: CellSpec, pipeline, models_dir: Path) -> Path:
     served = [cell for cell in all_cells() if released_model_name(cell) == name]
     repo = Path(__file__).resolve().parents[1]
     card = {
-        "schema": 2,
+        "schema": MODEL_CARD_SCHEMA,
         "name": name,
         "pipeline_name": spec.pipeline_name,
         "recipe_name": spec.recipe_name,
@@ -1601,6 +1626,11 @@ def load_released_model(directory: Path):
     from parkinson_spiral.pipelines import accelerator_device, get_pipeline
 
     card = json.loads((directory / MODEL_CARD).read_text(encoding="utf-8"))
+    if card.get("schema") not in SUPPORTED_MODEL_CARD_SCHEMAS:
+        raise ValueError(
+            f"{directory / MODEL_CARD} has schema {card.get('schema')!r}; this code reads schemas "
+            f"{', '.join(map(str, SUPPORTED_MODEL_CARD_SCHEMAS))}"
+        )
     for filename, expected in card["files"].items():
         if _sha256(directory / filename) != expected:
             raise ValueError(f"{directory / filename} does not match the checksum in its {MODEL_CARD}")
@@ -1692,7 +1722,10 @@ def verify_models_command(args: argparse.Namespace) -> int:
             record = {"model": card["name"], "cell_id": cell_id, "test_source": spec.test_source}
             record.update(compare_cell_predictions(pd.read_parquet(reference_path), new))
             records.append(record)
-            verdict = "same" if record["same_subject_metrics"] else "DIFFERENT"
+            if not record["same_test_images"]:
+                verdict = "DIFFERENT (the manifest's test images are not the reference run's)"
+            else:
+                verdict = "same" if record["same_subject_metrics"] else "DIFFERENT"
             delta = record["max_abs_proba_delta"]
             delta_s = "n/a" if delta is None else f"{delta:.3e}"
             print(
@@ -1713,6 +1746,78 @@ def verify_models_command(args: argparse.Namespace) -> int:
     args.out.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8", newline="\n")
     print(f"\n{sum(r['same_subject_metrics'] for r in records)}/{len(records)} cells reproduce; wrote {args.out}")
     return 0 if report["all_same_subject_metrics"] else 1
+
+
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
+
+
+def image_manifest(images: Path) -> pd.DataFrame:
+    """List one image, or the images directly inside a folder, as rows a saved model can score.
+
+    `image_id` is the path relative to the folder, so names stay unique and readable. The class
+    column is required by the dataset loader and unused when predicting, so it holds one fixed value.
+    """
+    if images.is_file():
+        paths, root = [images], images.parent
+    elif images.is_dir():
+        paths = sorted(p for p in images.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES)
+        root = images
+    else:
+        raise FileNotFoundError(f"no image or folder at {images}")
+    if not paths:
+        raise ValueError(f"no images ({', '.join(sorted(IMAGE_SUFFIXES))}) in {images}")
+    return pd.DataFrame({
+        "image_id": [p.relative_to(root).as_posix() for p in paths],
+        "file_path": [str(p) for p in paths],
+        "class_label": "healthy",
+    })
+
+
+def check_public_backbones(pipeline, card: dict) -> None:
+    """Refuse a model whose public backbones are not the ones it was trained with.
+
+    The saved files hold only what training fitted. The frozen backbones are loaded again from
+    their public source, and other weights of the same architecture would give plausible, wrong
+    probabilities without any error.
+    """
+    recorded = card["public_backbone_checksums"]
+    loaded = getattr(pipeline, "_model_weight_checksums", {})
+    different = sorted(name for name in recorded.keys() | loaded.keys() if recorded.get(name) != loaded.get(name))
+    if different:
+        raise ValueError(
+            f"{card['name']}: the loaded {', '.join(different)} weights do not match the checksum in the "
+            f"{MODEL_CARD}, so no prediction is returned"
+        )
+
+
+def predict_images(pipeline, card: dict, images: pd.DataFrame) -> pd.DataFrame:
+    """Probability of Parkinson's per image, with the preprocessing the model was trained with.
+
+    Raises if the public backbones the model loaded differ from the ones recorded when it was saved.
+    """
+    from parkinson_spiral.data.dataset import PreprocessedSpiralDataset
+    from parkinson_spiral.recipes import get_recipe
+    from parkinson_spiral.runner import _configure_reproducibility, _recipe_kwargs_for_spec
+
+    catalog = {cell.cell_id: cell for cell in all_cells()}
+    spec = catalog[next(iter(card["cells"]))]
+    _configure_reproducibility(card["seed"])
+    recipe = get_recipe(spec.recipe_name, **_recipe_kwargs_for_spec(spec))
+    dataset = PreprocessedSpiralDataset(images, recipe, is_train=False, target_column=spec.target_column)
+    proba = pipeline.predict_proba(dataset)
+    # A backbone is loaded on first use, so its checksum exists only once predict_proba has run.
+    check_public_backbones(pipeline, card)
+    return pd.DataFrame({"image_id": images["image_id"].to_numpy(), "p_parkinson": proba[:, 1]})
+
+
+def predict_command(args: argparse.Namespace) -> int:
+    """Score spiral images with one saved model and write the probabilities to a CSV."""
+    pipeline, card = load_released_model(args.model)
+    predictions = predict_images(pipeline, card, image_manifest(args.images))
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    predictions.to_csv(args.out, index=False, lineterminator="\n")
+    print(f"{card['name']}: scored {len(predictions)} images; wrote {args.out}")
+    return 0
 
 
 # ---- statistics and distances ----
@@ -1887,6 +1992,12 @@ def _build_parser() -> argparse.ArgumentParser:
     verify_models.add_argument("--results", type=Path, default=repo / "results", help="results of that run")
     verify_models.add_argument("--out", type=Path, default=repo / "results" / "verify_models.json")
     verify_models.set_defaults(func=verify_models_command)
+
+    predict = sub.add_parser("predict", help="score spiral images with one saved model")
+    predict.add_argument("--model", type=Path, required=True, help="one saved model's directory (holds model.json)")
+    predict.add_argument("--images", type=Path, required=True, help="a spiral image, or a folder of them")
+    predict.add_argument("--out", type=Path, default=repo / "results" / "predictions.csv")
+    predict.set_defaults(func=predict_command)
 
     statistics = sub.add_parser(
         "statistics",

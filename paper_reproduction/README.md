@@ -29,7 +29,6 @@ pipelines across three datasets in a full train × test factorial:
 - `scripts/` — Layer-1 regeneration and Layer-2 re-training entry points.
 - `notebooks/reproduce_experiments.ipynb` — the one notebook that runs everything,
   in the paper's naming.
-- `models/` — tooling to export and use the released DINOv2 + Moura probe.
 - `requirements-lock.txt` — fully pinned transitive dependency lock for exact
   Python 3.13 reproduction environments.
 - `docs/` — [`REPRODUCE.md`](docs/REPRODUCE.md), [`DATA.md`](docs/DATA.md),
@@ -52,8 +51,7 @@ paper_reproduction/
 │   └── recipes/           # one module per augmentation strategy
 ├── tests/                 # unit and integration checks
 ├── scripts/               # command-line reproduction entry points
-├── docs/                  # data, provenance, and reproduction notes
-└── models/                # optional released-model export/inference tooling
+└── docs/                  # data, provenance, and reproduction notes
 ```
 
 To add an experiment, define a `CellSpec` in `catalog.py`. To add a model, create a
@@ -88,21 +86,33 @@ python scripts/paper.py regenerate --results results
 Re-training is idempotent (keyed by `cell_id`): interrupted runs resume, and
 existing local predictions are skipped unless `--force` is passed.
 
-## The released model
+## Trained models
 
-One trained artifact accompanies the paper: a logistic **linear probe** on a
-**frozen, public DINOv2 ViT-B/14** backbone, fit on 100% of Moura. The backbone is
-never shipped (downloaded from `torch.hub` at use time); only the ~KB sklearn probe
-is ours. See [`models/MODEL_CARD.md`](models/MODEL_CARD.md).
+The four models trained on all of Moura, one per pipeline, are published openly at
+[doi:10.5281/zenodo.23748799](https://doi.org/10.5281/zenodo.23748799). Moura itself is available only on request, so these are the
+models nobody can rebuild without it; the eight trained on Zham or Folador can be
+rebuilt from the public data with `reproduce --save-models` (see
+[`docs/REPRODUCE.md`](docs/REPRODUCE.md)). Unzip each model archive into one
+`models/` folder, and the record's reference predictions into `reference/`. The
+cells these models serve test on Zham and Folador, so checking them against the
+paper's run needs only the public data:
 
 ```bash
-pip install -e ".[train,hf]"
-python models/predict.py --model-dir models/exported --images path/to/spirals/
+uv sync --extra train --extra hf
+python scripts/paper.py build-manifest --data-root <path with kaggle/ and folador/> --out results/manifest.parquet
+python scripts/paper.py verify-models --models models --manifest results/manifest.parquet --results reference
+python scripts/paper.py predict --model models/dinov2_probe-hemato --images path/to/spirals/ --out predictions.csv
 ```
 
-> It is a **reference / exploration checkpoint, not a screening or diagnostic
-> tool** — consistent with the paper's central finding that these classifiers do
-> not transfer across datasets.
+`predict` writes the probability of Parkinson's for each image, preprocessed as in
+training. The paper decides per participant: the mean over that participant's
+drawings, thresholded at 0.5. `predict` does not know which drawings belong to whom,
+so it makes no per-participant decision: score one folder per participant (or name the
+files so `image_id`, the file name, shows the participant), then average and threshold.
+
+> These are **reference checkpoints for research, not a screening or diagnostic
+> tool**. The paper's central finding is that these classifiers do not transfer
+> reliably across datasets.
 
 ## Data
 
@@ -118,6 +128,4 @@ list and BibTeX.
 ## License
 
 - **Code:** [`LICENSE`](LICENSE) — MIT.
-- **Released model:** [`models/MODEL_LICENSE.md`](models/MODEL_LICENSE.md) —
-  **OpenRAIL-M** with an added no-clinical-use restriction, reflecting the clinical
-  provenance of its training data. See [`models/MODEL_CARD.md`](models/MODEL_CARD.md).
+- **Trained models:** CC-BY-NC-4.0 (attribution, non-commercial use only), stated on their Zenodo record.

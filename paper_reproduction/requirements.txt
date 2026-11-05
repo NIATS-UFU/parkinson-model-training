@@ -3,7 +3,7 @@
 # canonical install is `pip install -e .`; this file is for a quick venv setup.
 #
 # For Layer-2 re-training add the [train] extra (torch/tensorflow/timm/tqdm),
-# and for publishing the released model add [hf] (skops/huggingface_hub):
+# and for saving, verifying or scoring with the trained models add [hf] (skops):
 #     pip install -e ".[train,hf]"
 
 numpy==2.4.6

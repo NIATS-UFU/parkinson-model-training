@@ -6,6 +6,8 @@ silently differ from the one behind the paper: a file that reloads to a differen
 changed after saving, an overwritten model, and a comparison that hides a changed decision.
 """
 
+import json
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -148,6 +150,46 @@ def test_a_file_changed_after_saving_is_refused(paper, tmp_path: Path) -> None:
         paper.load_released_model(directory)
 
 
+def test_a_model_card_of_an_unknown_schema_is_refused(paper, tmp_path: Path) -> None:
+    pytest.importorskip("skops")
+    pipeline, _ = _fitted_folador(paper)
+    directory = paper.save_released_model(_cell(paper, "folador_hog-kaggle"), pipeline, tmp_path)
+    card_path = directory / paper.MODEL_CARD
+    card = json.loads(card_path.read_text(encoding="utf-8"))
+    card_path.write_text(json.dumps({**card, "schema": 3}), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="has schema 3; this code reads schemas 1, 2"):
+        paper.load_released_model(directory)
+
+
+def test_a_schema_1_model_card_still_loads(paper, tmp_path: Path) -> None:
+    """Cards written before `weight_vector_heads` was added read the same way."""
+    pytest.importorskip("skops")
+    pipeline, features = _fitted_folador(paper)
+    directory = paper.save_released_model(_cell(paper, "folador_hog-kaggle"), pipeline, tmp_path)
+    card_path = directory / paper.MODEL_CARD
+    card = json.loads(card_path.read_text(encoding="utf-8"))
+    card_path.write_text(json.dumps({**card, "schema": 1}), encoding="utf-8")
+
+    reloaded, _ = paper.load_released_model(directory)
+
+    np.testing.assert_allclose(
+        reloaded._model.decision_function(features), pipeline._model.decision_function(features), rtol=0, atol=1e-12
+    )
+
+
+def test_the_catalog_trains_one_model_per_released_name(paper) -> None:
+    paper.check_one_model_per_name(all_cells())
+
+
+def test_two_cells_sharing_a_name_but_not_a_fit_are_refused(paper) -> None:
+    cell = _cell(paper, "folador_hog-kaggle")
+    other = replace(cell, test_source="hemato", pipeline_kwargs={"classifier": "KNN"})
+
+    with pytest.raises(ValueError, match="cells named folador_hog-kaggle train different models"):
+        paper.check_one_model_per_name([cell, other])
+
+
 def test_saving_refuses_to_overwrite(paper, tmp_path: Path) -> None:
     pytest.importorskip("skops")
     pipeline, _ = _fitted_folador(paper)
@@ -232,3 +274,93 @@ def test_comparison_flags_different_test_images(paper) -> None:
 
     assert result["same_test_images"] is False
     assert result["same_subject_metrics"] is False
+
+
+def _spiral_images(folder: Path, count: int) -> list[str]:
+    """Write small synthetic drawings: half dark strokes on white, half light, so HOG separates them."""
+    from PIL import Image
+
+    folder.mkdir(parents=True, exist_ok=True)
+    rng = np.random.default_rng(0)
+    labels = []
+    for index in range(count):
+        label = "parkinson" if index % 2 else "healthy"
+        ink = rng.random((64, 64)) < (0.3 if label == "parkinson" else 0.05)
+        Image.fromarray(np.where(ink, 0, 255).astype(np.uint8), mode="L").convert("RGB").save(folder / f"d{index}.png")
+        labels.append(label)
+    return labels
+
+
+def test_a_saved_model_scores_a_folder_of_new_images(paper, tmp_path: Path) -> None:
+    """`predict` gives each image the probability the trained pipeline gives it."""
+    pytest.importorskip("skops")
+    pytest.importorskip("torch")
+    from parkinson_spiral.data.dataset import PreprocessedSpiralDataset
+    from parkinson_spiral.pipelines.folador_hog import FoladorHOG
+    from parkinson_spiral.recipes import get_recipe
+
+    labels = _spiral_images(tmp_path / "train", 8)
+    train = paper.image_manifest(tmp_path / "train").assign(class_label=labels)
+    spec = _cell(paper, "folador_hog-kaggle")
+    recipe = get_recipe(spec.recipe_name)
+    pipeline = FoladorHOG(classifier="SVM_linear")
+    pipeline.fit(PreprocessedSpiralDataset(train, recipe, is_train=False), seed=0)
+    directory = paper.save_released_model(spec, pipeline, tmp_path / "models")
+    _spiral_images(tmp_path / "new", 4)
+    new = paper.image_manifest(tmp_path / "new")
+
+    reloaded, card = paper.load_released_model(directory)
+    predictions = paper.predict_images(reloaded, card, new)
+
+    expected = pipeline.predict_proba(PreprocessedSpiralDataset(new, recipe, is_train=False))[:, 1]
+    assert predictions["image_id"].tolist() == ["d0.png", "d1.png", "d2.png", "d3.png"]
+    np.testing.assert_allclose(predictions["p_parkinson"], expected, rtol=0, atol=1e-9)
+
+
+def test_a_backbone_that_differs_from_the_model_card_is_refused(paper) -> None:
+    """One changed weight in a public backbone stops `predict` from returning probabilities."""
+    torch = pytest.importorskip("torch")
+    from parkinson_spiral.pipelines.dinov2_probe import DinoV2Probe
+    from parkinson_spiral.weight_checksums import torch_module_sha256
+
+    backbone = torch.nn.Linear(4, 2)
+    card = {"name": "dinov2_probe-kaggle", "public_backbone_checksums": {"dinov2": torch_module_sha256(backbone)}}
+    pipeline = DinoV2Probe()
+    pipeline._model_weight_checksums = {"dinov2": torch_module_sha256(backbone)}
+    paper.check_public_backbones(pipeline, card)
+
+    with torch.no_grad():
+        backbone.weight[0, 0] += 1.0
+    pipeline._model_weight_checksums = {"dinov2": torch_module_sha256(backbone)}
+
+    with pytest.raises(ValueError, match="dinov2_probe-kaggle: the loaded dinov2 weights do not match"):
+        paper.check_public_backbones(pipeline, card)
+
+
+def test_a_backbone_missing_from_the_loaded_model_is_refused(paper) -> None:
+    pipeline, _ = _fitted_folador(paper)
+    card = {"name": "dogan_triple-kaggle", "public_backbone_checksums": {"xception": "0" * 64}}
+
+    with pytest.raises(ValueError, match="the loaded xception weights do not match"):
+        paper.check_public_backbones(pipeline, card)
+
+
+def test_scoring_a_folder_without_images_is_refused(paper, tmp_path: Path) -> None:
+    (tmp_path / "notes.txt").write_text("not an image", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="no images"):
+        paper.image_manifest(tmp_path)
+
+
+def test_a_folder_named_like_an_image_is_not_listed_as_one(paper, tmp_path: Path) -> None:
+    _spiral_images(tmp_path, 2)
+    (tmp_path / "archive.png").mkdir()
+
+    manifest = paper.image_manifest(tmp_path)
+
+    assert manifest["image_id"].tolist() == ["d0.png", "d1.png"]
+
+
+def test_scoring_a_missing_path_is_refused(paper, tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError, match="no image or folder"):
+        paper.image_manifest(tmp_path / "absent")
