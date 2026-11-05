@@ -48,9 +48,29 @@ jobs:
       - name: Run Tests
         run: make test
 
+  pytest-models:
+    name: Run Pytest (saved models)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: "Set up Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: "pyproject.toml"
+
+      - name: Run Tests With Extras
+        run: make paper-reproduction-test-models
+
   generate-version:
     name: Generate Version
-    needs: [ pre-commit, pytest ]
+    needs: [ pre-commit, pytest, pytest-models ]
     runs-on: ubuntu-latest
     outputs:
       dev_version: ${{ steps.dev_version.outputs.dev_version }}
