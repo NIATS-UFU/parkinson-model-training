@@ -1,7 +1,7 @@
-# Cross-Dataset Robustness of Spiral Classifiers for Parkinson's Disease
+# Cross-Dataset Robustness of Spiral Classifiers for Parkinson's Disease Screening
 
 Reproduction code for the paper *"Cross-Dataset Robustness of Spiral Classifiers
-for Parkinson's Disease Diagnosis"* (NIATS-UFU).
+for Parkinson's Disease Screening"* (NIATS-UFU).
 
 The paper asks a simple question: **do spiral-drawing Parkinson's classifiers that
 look good in-domain actually transfer to other datasets?** It evaluates four
@@ -15,10 +15,13 @@ pipelines across three datasets in a full train × test factorial:
 > them `kaggle`, `folador` and `hemato`. The keys are frozen — they are hashed into `cell_id`, into
 > every `image_id` and `subject_id`, and into the released artifact names — so they appear verbatim in
 > every command, path and result file below. Read `hemato` as **Moura** throughout.
-- **Findings:** strong in-domain ceilings (**H1**) collapse off-diagonal — spiral
-  classifiers **do not transfer across datasets** (**H2**) — while the frozen
+- **Findings:** each pipeline is first reproduced in-domain (**H1**). Across datasets,
+  **transfer depends on the target and on the pipeline** (**H2**): between the two
+  public datasets every pipeline's accuracy is above the majority-class baseline, and
+  when Moura is the test set no pipeline's is. The frozen
   DINOv2 probe matches fine-tuned CNNs at a fraction of the hyperparameter and
-  compute cost (**H4**).
+  compute cost (**H3**). The code and the `h4-cost` table name label this
+  hypothesis H4; read it as the paper's H3.
 
 ## What's in here
 
@@ -32,8 +35,7 @@ pipelines across three datasets in a full train × test factorial:
 - `requirements-lock.txt` — fully pinned transitive dependency lock for exact
   Python 3.13 reproduction environments.
 - `docs/` — [`REPRODUCE.md`](docs/REPRODUCE.md), [`DATA.md`](docs/DATA.md),
-  [`GCP_COLLABORATOR.md`](docs/GCP_COLLABORATOR.md),
-  [`PROVENANCE.md`](docs/PROVENANCE.md), and review
+  [`PROVENANCE.md`](docs/PROVENANCE.md), and the design
   [`DECISIONS.md`](docs/DECISIONS.md).
 
 ## Project structure
@@ -111,8 +113,8 @@ so it makes no per-participant decision: score one folder per participant (or na
 files so `image_id`, the file name, shows the participant), then average and threshold.
 
 > These are **reference checkpoints for research, not a screening or diagnostic
-> tool**. The paper's central finding is that these classifiers do not transfer
-> reliably across datasets.
+> tool**. The paper finds that when Moura, the clinical cohort, is the test set, no
+> pipeline's accuracy is above the majority-class baseline.
 
 ## Data
 
@@ -121,9 +123,10 @@ and available on request from NIATS-UFU. See [`docs/DATA.md`](docs/DATA.md).
 
 ## Citation
 
-If you use this code, please cite *"Cross-Dataset Robustness of Spiral Classifiers
-for Parkinson's Disease Diagnosis"* (NIATS-UFU). See the paper for the full author
-list and BibTeX.
+If you use this code, please cite:
+
+> M. F. Nozella, F. Andreotti, M. De Vos and A. O. Andrade, "Cross-Dataset Robustness
+> of Spiral Classifiers for Parkinson's Disease Screening" (submitted).
 
 ## License
 

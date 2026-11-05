@@ -49,14 +49,14 @@ NATIVE = [
 ]
 
 # H1 "Published" column = each source paper's own reported accuracy (external literature
-# constants, NOT computed here). Kept verbatim from conference_v2.tex with its footnotes.
+# constants, NOT computed here), with the footnotes the paper's table gives them.
 PUBLISHED_LITERATURE = {
     "huang_vgg19": ("0.87", "a", "spiral, single split"),
     "dogan_triple": ("0.994", "b", "spiral+wave combined, single split (upper bound)"),
     "folador_hog": ("0.696", "c", "spiral, 5-fold CV (sinusoidal best 0.831)"),
 }
 
-# Short training-regime descriptions for the H4 cost table (conference_v2.tex Table h4-cost).
+# Short training-regime descriptions for the cost table (`h4-cost`).
 TRAINING_REGIME = {
     "dinov2_probe": "frozen backbone; single-pass features + 1 logistic fit",
     "folador_hog": "deterministic HOG + classifier fit (no epochs)",

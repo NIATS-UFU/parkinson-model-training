@@ -1,7 +1,7 @@
 # Provenance of generated results
 
-This documents how the curated 97-cell result set (`results/cells.parquet` +
-`results/predictions/`) relates to the paper when generated locally, so the
+This documents how a 97-cell result set (`results/cells.parquet` +
+`results/predictions/`), generated locally, relates to the paper, so the
 numbers can be trusted and traced without committing generated parquet artifacts.
 
 ## The 97 cells
@@ -38,36 +38,13 @@ hard-coded values are the published-literature reference numbers in the
 `b1-fidelity` table (Huang 0.87, Dogan 0.994, Folador 0.696), which are clearly
 labelled as external citations.
 
-## Curation: a paper-scoped subset
+## Scope of the catalog
 
-The 97-cell result set is a curated subset of a larger internal benchmark run,
-restricted to exactly the experiments the paper reports. The selection is
-**deterministic and involves no retraining**: cells are selected by their
-parameters, each cell's identity is re-verified by recomputing its `cell_id`, and
-the result matches the catalog exactly (`scripts/paper.py verify-catalog --results results`).
-Every generated file uses the paper's naming throughout.
-
-Out of paper scope and therefore excluded: the dropped leakage-gap analysis, the
-acquisition-source classifier (H5), the Bernardo binarization recipe and other
-augmentation variants the paper does not use, the Folador RFC/KNN/CNN1D classifier
-heads, and the wave / all-modality experiments. The Folador pipeline ships its
-**SVM_linear** head (`pipeline_kwargs={"classifier": "SVM_linear"}`), which is what
-the paper reports.
-
-## Known nuance: two GPU-trained cross-dataset AUCs
-
-For **2 of the 24** cross-dataset cells — both GPU-fine-tuned (one Huang VGG19, one
-Dogan triple) — the subject-level **AUC** re-derived from generated predictions
-differs from the value recorded in an earlier manuscript draft by **≤ 0.0117**
-(e.g. Huang K→H: 0.426 recorded vs 0.4376 re-pooled). Accuracy, sensitivity,
-specificity, precision and F1 are **bit-identical**. The cause is cuDNN
-nondeterminism in the GPU fine-tuning (the probabilities differ in the low-order
-digits that AUC's ranking is sensitive to but the 0.5-threshold metrics are not).
-
-**Resolution:** all reported numbers are derived **uniformly from local
-`predictions/`** (one source of truth), so the repository is internally consistent
-and reproducible. No conclusion in the paper depends on these third-decimal AUC
-differences — the H2 finding (poor cross-dataset transfer) is unchanged.
+The catalog holds exactly the experiments the paper reports, in the paper's naming. A
+result set is produced by running `scripts/paper.py reproduce` over it, and
+`scripts/paper.py verify-catalog --results results` confirms that the result set and
+the catalog name the same 97 cells. The Folador pipeline runs its **SVM_linear** head
+(`pipeline_kwargs={"classifier": "SVM_linear"}`), which is what the paper reports.
 
 ## The commit the frozen evidence names
 

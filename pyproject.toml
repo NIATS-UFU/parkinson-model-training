@@ -57,11 +57,6 @@ name = "pytorch-cu126"
 url = "https://download.pytorch.org/whl/cu126"
 explicit = true
 
-# [[tool.uv.index]]
-# name = "private_index"
-# url = "XXXXXX/simple/"
-# publish-url = "XXXX"
-
 [project.scripts]
 main-cli = "parkinson_model_train.main:main"
 

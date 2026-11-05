@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
+This file provides guidance to coding agents when working with code in this repository.
 
 ## Project
 
@@ -80,7 +80,7 @@ paper_reproduction/            # Self-contained benchmark reproduction package
                                #   recipes/ (aug_none, aug_huang, aug_dogan)
   scripts/paper.py             # Single CLI for every reproduction subcommand
   evidence/                    # Frozen provenance artifacts — see the warning below
-  docs/                        # DATA, REPRODUCE, DECISIONS, PROVENANCE, GCP_COLLABORATOR
+  docs/                        # DATA, REPRODUCE, DECISIONS, PROVENANCE
   tests/                       # Reproduction suite
 
 docker/Dockerfile              # Installs pre-built wheel, entrypoint: main-cli
@@ -147,21 +147,13 @@ exact code that produced it. Two consequences matter when editing:
 - Comments explain **why**, not what. Full sentences, used sparingly.
 - Do not update docs unless public behaviour changed.
 
-## Working with Fernando Andreotti
-
-### Before presenting any change
+## Before presenting any change
 
 1. Run `make check` — confirm it passes. If your change must not touch `parkinson_spiral`, run `make lint && make test` instead.
 2. State the assumption if something is ambiguous and proceed; don't ask for confirmation on small details.
 3. If adding a dependency, explain why explicitly.
 
-### Communication style
-
-- Lead with the answer or the change, not the reasoning.
-- Flag blockers immediately; don't explore silently.
-- Be direct and concise.
-
-### Ask before doing
+## Ask before doing
 
 - Adding or removing dependencies
 - Changing the public API of existing functions
