@@ -1773,8 +1773,28 @@ def image_manifest(images: Path) -> pd.DataFrame:
     })
 
 
+def check_public_backbones(pipeline, card: dict) -> None:
+    """Refuse a model whose public backbones are not the ones it was trained with.
+
+    The saved files hold only what training fitted. The frozen backbones are loaded again from
+    their public source, and other weights of the same architecture would give plausible, wrong
+    probabilities without any error.
+    """
+    recorded = card["public_backbone_checksums"]
+    loaded = getattr(pipeline, "_model_weight_checksums", {})
+    different = sorted(name for name in recorded.keys() | loaded.keys() if recorded.get(name) != loaded.get(name))
+    if different:
+        raise ValueError(
+            f"{card['name']}: the loaded {', '.join(different)} weights do not match the checksum in the "
+            f"{MODEL_CARD}, so no prediction is returned"
+        )
+
+
 def predict_images(pipeline, card: dict, images: pd.DataFrame) -> pd.DataFrame:
-    """Probability of Parkinson's per image, with the preprocessing the model was trained with."""
+    """Probability of Parkinson's per image, with the preprocessing the model was trained with.
+
+    Raises if the public backbones the model loaded differ from the ones recorded when it was saved.
+    """
     from parkinson_spiral.data.dataset import PreprocessedSpiralDataset
     from parkinson_spiral.recipes import get_recipe
     from parkinson_spiral.runner import _configure_reproducibility, _recipe_kwargs_for_spec
@@ -1785,6 +1805,8 @@ def predict_images(pipeline, card: dict, images: pd.DataFrame) -> pd.DataFrame:
     recipe = get_recipe(spec.recipe_name, **_recipe_kwargs_for_spec(spec))
     dataset = PreprocessedSpiralDataset(images, recipe, is_train=False, target_column=spec.target_column)
     proba = pipeline.predict_proba(dataset)
+    # A backbone is loaded on first use, so its checksum exists only once predict_proba has run.
+    check_public_backbones(pipeline, card)
     return pd.DataFrame({"image_id": images["image_id"].to_numpy(), "p_parkinson": proba[:, 1]})
 
 
